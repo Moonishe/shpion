@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import Router, F, Bot
@@ -834,27 +835,27 @@ async def _start_describing_phase(message: Message, session, bot: Bot):
 
     round_hint = "⚠️ Первый раунд — говори максимально обобщённо!"
 
-    await message.answer(f"""
+    msg = await message.answer(f"""
 📝 <b>РАУНД 1</b> — описания
 
 {round_hint}
 
 🗣️ <b>{first_player.full_name}</b>, твоя очередь!
    Назови 1 признак вслух. Имя не называй!
-""".strip())
+""".strip(), reply_markup=i_said_keyboard(session.chat_id))
 
-    # Отправляем кнопку "Я сказал" в ЛС
+    # Уведомление в ЛС (без кнопки)
     try:
         await bot.send_message(
             first_player.user_id,
             f"🎯 <b>Твоя очередь!</b>\n\n"
             f"{round_hint}{_get_role_hint(first_player)}\n\n"
-            f"Скажи признак ВСЛУХ, затем нажми кнопку.",
-            reply_markup=i_said_keyboard(session.chat_id),
+            f"Скажи признак ВСЛУХ, затем нажми кнопку в группе."
         )
     except Exception as e:
-        logger.warning("Не удалось отправить кнопку Я-сказал (id=%d): %s", first_player.user_id, e)
+        logger.warning("Не удалось уведомить игрока (id=%d): %s", first_player.user_id, e)
 
+    await _start_turn_timer(session.chat_id, session, bot, msg)
     await lobby_service.persist_session(session)
 
 
@@ -886,6 +887,7 @@ async def cb_cancel(callback: CallbackQuery):
     if not session or session.creator_id != callback.from_user.id:
         await callback.answer("🔒 Только создатель может отменить игру.", show_alert=True)
         return
+    await _cancel_turn_timer(chat_id)
     await lobby_service.end_session(chat_id)
     await callback.answer("🗑️ Отменено.")
     await callback.message.edit_text("🗑️ <b>Игра отменена.</b>\n\nНовая игра: /spy", reply_markup=play_again_keyboard())
@@ -902,6 +904,7 @@ async def cmd_stop(message: Message):
     if session.creator_id != message.from_user.id:
         await message.answer("🔒 Только создатель может остановить.")
         return
+    await _cancel_turn_timer(chat_id)
     await lobby_service.end_session(chat_id)
     await message.answer("🛑 <b>Игра остановлена.</b>", reply_markup=play_again_keyboard())
 
@@ -1191,6 +1194,110 @@ async def cmd_clearchars(message: Message):
 
 _reroll_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted yes
 
+# Таймеры авто-пропуска хода
+_turn_timers: dict[int, asyncio.Task] = {}  # chat_id -> timer task
+
+
+async def _cancel_turn_timer(chat_id: int):
+    """Отменяет таймер авто-пропуска для чата."""
+    task = _turn_timers.pop(chat_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def _start_turn_timer(chat_id: int, session, bot: Bot, message, timeout: int = 20):
+    """Запускает таймер авто-пропуска хода. Если игрок не нажал «Я сказал» — пропускаем."""
+    await _cancel_turn_timer(chat_id)
+
+    async def _auto_skip():
+        try:
+            await asyncio.sleep(timeout)
+            s = lobby_service.get_session(chat_id)
+            if not s or s.state != GameState.DESCRIBING:
+                return
+            current = get_next_player(s)
+            if current and not current.has_described:
+                await bot.send_message(chat_id,
+                    f"⏰ <b>{current.full_name}</b> не ответил — пропускаем ход."
+                )
+                # Эмулируем нажатие «Я сказал»
+                await _do_i_said(chat_id, current.user_id, bot, message)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Ошибка в таймере хода чата %d: %s", chat_id, e)
+        finally:
+            _turn_timers.pop(chat_id, None)
+
+    _turn_timers[chat_id] = asyncio.create_task(_auto_skip())
+
+
+async def _do_i_said(chat_id: int, user_id: int, bot: Bot, message):
+    """Обрабатывает завершение хода игрока (нажал или авто-пропуск)."""
+    from bot.keyboards.inline import i_said_keyboard
+
+    session = lobby_service.get_session(chat_id)
+    if not session or session.state != GameState.DESCRIBING:
+        return
+
+    player = session.get_player(user_id)
+    if not player:
+        return
+
+    current = get_next_player(session)
+    if not current or current.user_id != user_id:
+        return
+
+    if current.has_described:
+        return
+
+    current.has_described = True
+    session.current_turn_index += 1
+    update_session_activity(session)
+
+    await bot.send_message(chat_id, f"✅ <b>{current.full_name}</b> сказал!")
+
+    if check_all_described(session):
+        await _cancel_turn_timer(chat_id)
+        session.description_round += 1
+        session.state = GameState.DISCUSSION
+        await lobby_service.persist_session(session)
+
+        await bot.send_message(chat_id,
+            f"🎉 <b>Раунд!</b> Пауза 10 сек... Шпион: <code>/guess Имя</code>"
+        )
+        await asyncio.sleep(10)
+
+        await bot.send_message(chat_id, """
+⏰ <b>Что дальше?</b>
+
+🗳️ Голосовать — выбрать шпиона
+▶️ Следующий раунд — ещё описания
+""".strip(), reply_markup=round_end_keyboard(chat_id))
+        return
+
+    next_player = get_next_player(session)
+    if next_player:
+        round_hint = "⚠️ Говори максимально обобщённо!" if session.description_round <= 2 else ""
+        msg = await bot.send_message(chat_id,
+            f"🗣️ <b>{next_player.full_name}</b>, говори! 1 признак вслух."
+            + (f"\n{round_hint}" if round_hint else ""),
+            reply_markup=i_said_keyboard(chat_id),
+        )
+        try:
+            await bot.send_message(next_player.user_id,
+                f"🎯 <b>Твоя очередь!</b>"
+                + (f"\n\n{round_hint}" if round_hint else "")
+                + _get_role_hint(next_player)
+                + "\n\nСкажи вслух и жми кнопку в группе."
+            )
+        except Exception as e:
+            logger.warning("Не удалось уведомить игрока (id=%d): %s", next_player.user_id, e)
+
+        await _start_turn_timer(chat_id, session, bot, msg)
+
+    await lobby_service.persist_session(session)
+
 
 @router.message(Command("reroll"))
 async def cmd_reroll(message: Message, bot: Bot):
@@ -1341,28 +1448,60 @@ async def cb_next_round(callback: CallbackQuery, bot: Bot):
     if not first_player:
         return
 
-    await bot.send_message(chat_id, f"""
+    from bot.keyboards.inline import i_said_keyboard
+    msg = await bot.send_message(chat_id, f"""
 📝 <b>РАУНД {session.description_round}</b>
 
 {round_hint}
 
 🗣️ <b>{first_player.full_name}</b>, говори! Назови 1 признак вслух.
-""".strip())
+""".strip(), reply_markup=i_said_keyboard(chat_id))
 
-    # Отправляем кнопку "Я сказал" в ЛС
+    # Уведомление в ЛС
     try:
-        from bot.keyboards.inline import i_said_keyboard
         await bot.send_message(
             first_player.user_id,
             f"🎯 <b>Раунд {session.description_round} — твоя очередь!</b>\n\n"
             f"{round_hint}{_get_role_hint(first_player)}\n\n"
-            f"Скажи признак ВСЛУХ, затем нажми кнопку.",
-            reply_markup=i_said_keyboard(chat_id),
+            f"Скажи признак ВСЛУХ, затем нажми кнопку в группе."
         )
     except Exception as e:
-        logger.warning("Не удалось отправить кнопку Я-сказал (id=%d): %s", first_player.user_id, e)
+        logger.warning("Не удалось уведомить игрока (id=%d): %s", first_player.user_id, e)
 
+    await _start_turn_timer(chat_id, session, bot, msg)
     await lobby_service.persist_session(session)
+
+
+@router.callback_query(F.data.startswith("i_said_"))
+async def cb_i_said_group(callback: CallbackQuery, bot: Bot):
+    """Игрок нажал «Я сказал» в группе."""
+    if not check_rate_limit(callback.from_user.id, cooldown=1.0):
+        await callback.answer("⏳ Слишком быстро.", show_alert=True)
+        return
+    chat_id = int(callback.data.split("_")[2])
+    session = lobby_service.get_session(chat_id)
+    if not session or session.state != GameState.DESCRIBING:
+        await callback.answer("❌ Сейчас не фаза описаний.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    player = session.get_player(user_id)
+    if not player:
+        await callback.answer("❌ Ты не в этой игре.", show_alert=True)
+        return
+
+    current = get_next_player(session)
+    if not current or current.user_id != user_id:
+        await callback.answer("⏳ Сейчас не твоя очередь.", show_alert=True)
+        return
+
+    if current.has_described:
+        await callback.answer("✅ Ты уже сказал.", show_alert=True)
+        return
+
+    await _cancel_turn_timer(chat_id)
+    await callback.answer("✅ Принято!")
+    await _do_i_said(chat_id, user_id, bot, callback.message)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1462,6 +1601,18 @@ async def cb_answer_question(callback: CallbackQuery):
 # 🗳️ ГОЛОСОВАНИЕ
 # ═══════════════════════════════════════════════════════════════
 
+def _get_not_voted_names(session) -> str:
+    """Возвращает строку с именами игроков, которые ещё не проголосовали."""
+    not_voted = []
+    for p in session.players:
+        if p.vote_for is None:
+            name = f"@{p.username}" if p.username else p.full_name
+            not_voted.append(name)
+    if not not_voted:
+        return ""
+    return "⏳ Ждём: " + ", ".join(not_voted)
+
+
 @router.message(Command("vote"))
 async def cmd_vote(message: Message, bot: Bot):
     if not check_rate_limit(message.from_user.id, cooldown=2.0):
@@ -1485,7 +1636,11 @@ async def _start_vote(chat_id: int, bot: Bot, message):
 
     session.state = GameState.VOTING
     update_session_activity(session)
-    await message.answer("🗳️ <b>ГОЛОСОВАНИЕ</b>\n\nКто шпион? Жми на имя:",
+    total = len(session.players)
+    required = int(total * 0.75) + 1  # >75%
+    waiting = _get_not_voted_names(session)
+    await message.answer(
+        f"🗳️ <b>ГОЛОСОВАНИЕ</b>\n\nНужно >75% голосов ({required}/{total}) для раскрытия.\n{waiting}\n\nКто шпион? Жми на имя:",
         reply_markup=vote_keyboard(chat_id, session.players),
     )
 
@@ -1518,24 +1673,28 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
     if not voter or not target:
         await callback.answer("⚠️ Вы или цель не в игре.", show_alert=True)
         return
-    if voter.vote_for is not None:
-        await callback.answer("✅ Вы уже проголосовали.", show_alert=True)
-        return
     if voter.user_id == target_id:
         await callback.answer("❌ Нельзя голосовать за себя!", show_alert=True)
         return
 
+    # Разрешаем переголосовать
+    changed = voter.vote_for is not None and voter.vote_for != target_id
     voter.vote_for = target_id
-    await callback.answer(f"🗳️ Вы проголосовали за {target.full_name}")
+    if changed:
+        await callback.answer(f"🔄 Переголосовал за {target.full_name}")
+    else:
+        await callback.answer(f"🗳️ Вы проголосовали за {target.full_name}")
 
     result = process_vote_result(session)
 
     if result is None:
         total = len(session.players)
         voted = sum(1 for p in session.players if p.vote_for is not None)
+        required = int(total * 0.75) + 1  # >75%
+        waiting = _get_not_voted_names(session)
         if voted < total:
             await callback.message.edit_text(
-                f"🗳️ <b>Голосование</b> ({voted}/{total})\n\nКто шпион?",
+                f"🗳️ <b>Голосование</b> ({voted}/{total}) — нужно >75% ({required})\n{waiting}\n\nКто шпион?",
                 reply_markup=vote_keyboard(chat_id, session.players),
             )
         else:
@@ -1570,6 +1729,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
         await _reset_votes(session)
 
     elif outcome == "civilians":
+        await _cancel_turn_timer(chat_id)
         await bot.send_message(chat_id,
             f"🎉 <b>МИРНЫЕ ПОБЕДИЛИ!</b>\n\n<b>{target_name}</b> — шпион. Персонаж: <code>{session.character}</code>",
             reply_markup=play_again_keyboard()

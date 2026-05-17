@@ -87,12 +87,12 @@ async def cmd_guess(message: Message, bot: Bot):
     await lobby_service.persist_session(session)
     result = check_victory(session)
 
-    try:
-        await record_stats(session, civilians_won=False, spy_guess=True)
-    except Exception as e:
-        logger.warning("Не удалось записать статистику: %s", e)
-
     if result == "spy_guess":
+        try:
+            await record_stats(session, civilians_won=False, spy_guess=True)
+        except Exception as e:
+            logger.warning("Не удалось записать статистику: %s", e)
+
         await bot.send_message(session.chat_id, f"""
 🕵️ <b>ШПИОН ПОБЕДИЛ!</b>
 
@@ -100,8 +100,16 @@ async def cmd_guess(message: Message, bot: Bot):
 """.strip(), reply_markup=play_again_keyboard())
 
         await message.answer("🎉 Ты угадал! Победа за шпионами!")
+        # Отменяем таймер хода если был
+        from bot.handlers.group import _cancel_turn_timer
+        await _cancel_turn_timer(session.chat_id)
         await lobby_service.end_session(session.chat_id)
     elif result == "all_traitors_win":
+        try:
+            await record_stats(session, civilians_won=False, spy_guess=True)
+        except Exception as e:
+            logger.warning("Не удалось записать статистику: %s", e)
+
         await bot.send_message(session.chat_id, f"""
 👿 <b>ПОБЕДИТЕЛЬ!</b>
 
@@ -110,6 +118,8 @@ async def cmd_guess(message: Message, bot: Bot):
 """.strip(), reply_markup=play_again_keyboard())
 
         await message.answer("🎉 Ты угадал первым! Победа в режиме «Все предатели»!")
+        from bot.handlers.group import _cancel_turn_timer
+        await _cancel_turn_timer(session.chat_id)
         await lobby_service.end_session(session.chat_id)
     else:
         await message.answer(f"""

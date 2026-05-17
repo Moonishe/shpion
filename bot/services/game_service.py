@@ -222,7 +222,8 @@ def update_session_activity(session: GameSession):
 def process_vote_result(session: GameSession) -> dict | None:
     """
     Обрабатывает результат голосования.
-    Возвращает словарь с результатом или None если нет большинства.
+    Возвращает словарь с результатом или None если недостаточно голосов.
+    Требуется >75% участия для раскрытия результата.
     """
     most_voted, count = get_most_voted(session)
     if most_voted is None:
@@ -236,8 +237,13 @@ def process_vote_result(session: GameSession) -> dict | None:
         return None
 
     majority = total // 2 + 1
+    required_votes = int(total * 0.75) + 1  # >75% must participate
 
-    # Если ещё не набрали большинство — не обрабатываем
+    # Нужно >75% участия, иначе результат не раскрывается
+    if voted < required_votes:
+        return None
+
+    # Если ещё не набрали большинство и не все проголосовали — не обрабатываем
     if count < majority and voted < total:
         return None
 
