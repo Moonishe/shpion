@@ -255,7 +255,8 @@ async def cb_i_said(callback: CallbackQuery, bot: Bot):
         round_hint = "⚠️ Говори максимально обобщённо!" if session.description_round <= 2 else ""
         await bot.send_message(chat_id,
             f"🗣️ <b>{html.escape(next_player.full_name)}</b>, говори! 1 признак вслух."
-            + (f"\n{round_hint}" if round_hint else "")
+            + (f"\n{round_hint}" if round_hint else ""),
+            reply_markup=i_said_keyboard(chat_id),
         )
 
         try:
