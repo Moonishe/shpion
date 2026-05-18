@@ -14,6 +14,7 @@ class GameType(Enum):
     QUESTIONS = "questions"    # Режим вопросов да/нет
     NO_TRAITORS = "no_traitors"  # Игра без предателей (никто не знает)
     ALL_TRAITORS = "all_traitors"  # Все предатели (никто не знает)
+    BLIND_SPY = "blind_spy"    # Слепой шпион — получает фейкового персонажа
 
 
 class SettingsMode(Enum):

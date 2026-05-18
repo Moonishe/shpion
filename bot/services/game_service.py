@@ -48,11 +48,30 @@ def normalize_for_comparison(s: str) -> str:
     return s
 
 
+def _levenshtein(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr = [i + 1]
+        for j, c2 in enumerate(s2):
+            insert = prev[j + 1] + 1
+            delete = curr[j] + 1
+            sub = prev[j] + (0 if c1 == c2 else 1)
+            curr.append(min(insert, delete, sub))
+        prev = curr
+    return prev[-1]
+
+
 def guess_matches(guess: str, character: str) -> bool:
-    """Проверяет, совпадает ли догадка с персонажем (гибкое сравнение)."""
+    """Проверяет, совпадает ли догадка с персонажем (fuzzy matching 45%)."""
     g = normalize_for_comparison(guess)
     c = normalize_for_comparison(character)
-    return g == c
+    dist = _levenshtein(g, c)
+    threshold = max(1, int(len(c) * 0.45))
+    return dist <= threshold
 
 # Рейт-лимит: {user_id: last_command_time}
 _rate_limit: dict[int, float] = {}
@@ -146,6 +165,17 @@ def assign_roles(session: GameSession, pick_character: bool = True) -> None:
         session.state = GameState.ROLE_DISTRIBUTION
         return
 
+    if session.game_type == GameType.BLIND_SPY:
+        for p in session.players:
+            p.role = Role.CIVILIAN
+        others = [c for c in characters if c != session.character]
+        fake_char = random.choice(others) if others else "Загадочный незнакомец"
+        spy_target = random.choice(session.players)
+        spy_target.role = Role.SPY
+        spy_target.fake_character = fake_char
+        session.state = GameState.ROLE_DISTRIBUTION
+        return
+
     # Перемешиваем игроков для случайного распределения
     ordered = session.players[:]
     random.shuffle(ordered)
@@ -192,7 +222,6 @@ def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
     character = session.character
 
     if hint_type == "random_letter":
-        # Выбираем случайную букву (не пробел и не спецсимвол)
         letter_positions = [i for i, c in enumerate(character) if c.isalpha()]
         if letter_positions:
             pos = random.choice(letter_positions)
@@ -200,8 +229,23 @@ def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
             return f"🎲 Буква на позиции {pos + 1}: <b>{letter}</b>"
         else:
             return f"🎲 Буква на позиции 1: <b>{character[0].upper()}</b>"
+    elif hint_type == "first_letter":
+        first = character[0].upper() if character else "?"
+        return f"🔤 Первая буква: <b>{first}</b>"
+    elif hint_type == "last_letter":
+        last = character[-1].upper() if character else "?"
+        return f"🔤 Последняя буква: <b>{last}</b>"
     elif hint_type == "length":
         return f"📏 Длина имени: <b>{len(character)}</b> символов"
+    elif hint_type == "word_count":
+        words = character.split()
+        word_str = "слово" if len(words) == 1 else ("слова" if 2 <= len(words) <= 4 else "слов")
+        return f"📝 Количество слов: <b>{len(words)}</b> {word_str}"
+    elif hint_type == "category":
+        from bot.config import get_category_name, get_characters_by_category
+        cats = session.categories
+        cat_name = get_category_name(cats)
+        return f"📂 Категория: <b>{cat_name}</b>"
 
     return "❌ Неизвестный тип подсказки"
 

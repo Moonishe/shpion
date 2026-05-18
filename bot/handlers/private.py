@@ -79,8 +79,16 @@ async def cmd_guess(message: Message, bot: Bot):
 
     if not session or not player:
         await message.answer(
-            "🚫 Ты не шпион в активной игре. Эта команда только для шпионов."
+            "🎭 Ты не в игре."
         )
+        return
+
+    if session.game_type == GameType.BLIND_SPY:
+        await message.answer("🎭 Ты мирный, угадывать не нужно. Слушай описания.")
+        return
+
+    if player.role != Role.SPY:
+        await message.answer("🎭 Ты мирный, угадывать не нужно. Слушай описания.")
         return
 
     session.spy_guess = guess
@@ -148,11 +156,19 @@ async def cmd_hint(message: Message):
             break
 
     if not session or not player:
-        await message.answer("🚫 Ты не шпион. Подсказки только для шпионов.")
+        await message.answer("🎭 Ты не в игре.")
         return
 
     if session.game_type == GameType.ALL_TRAITORS:
         await message.answer("🚫 В этом режиме подсказки отключены. Догадывайся сам!")
+        return
+
+    if session.game_type == GameType.BLIND_SPY:
+        await message.answer("🎭 Ты мирный, подсказки не для тебя. Слушай описания.")
+        return
+
+    if player.role != Role.SPY:
+        await message.answer("🎭 Ты мирный, подсказки не для тебя. Слушай описания.")
         return
 
     if player.hint_used:
@@ -179,11 +195,15 @@ async def cb_hint(callback: CallbackQuery):
             break
 
     if not session or not player:
-        await callback.answer("❌ Ты не шпион.", show_alert=True)
+        await callback.answer("🎭 Ты мирный, подсказки не для тебя.", show_alert=True)
         return
 
     if session.game_type == GameType.ALL_TRAITORS:
         await callback.answer("🚫 Подсказки отключены!", show_alert=True)
+        return
+
+    if session.game_type == GameType.BLIND_SPY:
+        await callback.answer("🎭 Ты мирный, подсказки не для тебя.", show_alert=True)
         return
 
     if player.hint_used:

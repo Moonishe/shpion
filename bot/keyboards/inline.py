@@ -60,6 +60,7 @@ def settings_keyboard(session) -> InlineKeyboardMarkup:
     game_type_map = {
         GameType.CLASSIC: "Классика",
         GameType.QUESTIONS: "Вопросы",
+        GameType.BLIND_SPY: "Слепой шпион",
     }
     game_type_text = game_type_map.get(session.game_type, "Классика")
 
@@ -161,6 +162,10 @@ def game_type_keyboard() -> InlineKeyboardMarkup:
             text="❓ Вопросы (да/нет)",
             callback_data="set_game_type_questions"
         )],
+        [InlineKeyboardButton(
+            text="🎭 Слепой шпион",
+            callback_data="set_game_type_blind_spy"
+        )],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -194,14 +199,18 @@ def vote_keyboard(chat_id: int, players: list) -> InlineKeyboardMarkup:
 def hint_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура выбора подсказки для шпиона."""
     buttons = [
-        [InlineKeyboardButton(
-            text="🎲 Случайная буква",
-            callback_data="hint_random_letter"
-        )],
-        [InlineKeyboardButton(
-            text="📏 Длина имени",
-            callback_data="hint_length"
-        )],
+        [
+            InlineKeyboardButton(text="🎲 Случ. буква", callback_data="hint_random_letter"),
+            InlineKeyboardButton(text="🔤 Первая буква", callback_data="hint_first_letter"),
+        ],
+        [
+            InlineKeyboardButton(text="🔤 Последняя буква", callback_data="hint_last_letter"),
+            InlineKeyboardButton(text="📏 Длина имени", callback_data="hint_length"),
+        ],
+        [
+            InlineKeyboardButton(text="📝 Кол-во слов", callback_data="hint_word_count"),
+            InlineKeyboardButton(text="📂 Категория", callback_data="hint_category"),
+        ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

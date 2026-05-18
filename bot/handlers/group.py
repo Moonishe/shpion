@@ -88,18 +88,19 @@ def _lobby_text(session) -> str:
     else:
         mode_text = f"{session.spy_count} шпион(ов)" if session.spy_count else "1 шпион"
         cat_name_text = get_category_name(session.categories)
-        game_type_map = {
-            GameType.CLASSIC: "📝 Классика",
-            GameType.QUESTIONS: "❓ Вопросы",
-        }
-        game_type_text = game_type_map.get(session.game_type, "📝 Классика")
-        provocateur_text = "есть" if session.provocateur_enabled else "нет"
-        host_text = ""
-        if session.host_mode:
-            host_obj = session.get_player(session.host_id)
-            host_name = host_obj.full_name if host_obj else "???"
-            host_text = f"\n👤 Ведущий: {host_name}"
-        settings_block = f"🕵️ <b>Шпионы:</b> {mode_text}\n📂 {cat_name_text}  •  🎯 {game_type_text}  •  🤡 Провокатор: {provocateur_text}{host_text}"
+    game_type_map = {
+        GameType.CLASSIC: "📝 Классика",
+        GameType.QUESTIONS: "❓ Вопросы",
+        GameType.BLIND_SPY: "🎭 Слепой шпион",
+    }
+    game_type_text = game_type_map.get(session.game_type, "📝 Классика")
+    provocateur_text = "есть" if session.provocateur_enabled else "нет"
+    host_text = ""
+    if session.host_mode:
+        host_obj = session.get_player(session.host_id)
+        host_name = host_obj.full_name if host_obj else "???"
+        host_text = f"\n👤 Ведущий: {host_name}"
+    settings_block = f"🕵️ <b>Шпионы:</b> {mode_text}\n📂 {cat_name_text}  •  🎯 {game_type_text}  •  🤡 Провокатор: {provocateur_text}{host_text}"
     
     return f"""
 🎭 <b>ШПИОН</b> — лобби
@@ -118,6 +119,7 @@ def _settings_text(session) -> str:
     game_type_map = {
         GameType.CLASSIC: "📝 Классика",
         GameType.QUESTIONS: "❓ Вопросы",
+        GameType.BLIND_SPY: "🎭 Слепой шпион",
     }
     game_type_text = game_type_map.get(session.game_type, "📝 Классика")
     provocateur_text = "да" if session.provocateur_enabled else "нет"
@@ -448,6 +450,9 @@ async def cb_set_game_type(callback: CallbackQuery):
     elif game_type == "questions":
         session.game_type = GameType.QUESTIONS
         type_name = "Вопросы"
+    elif game_type == "blind_spy":
+        session.game_type = GameType.BLIND_SPY
+        type_name = "Слепой шпион"
     else:
         session.game_type = GameType.CLASSIC
         type_name = "Классика"
@@ -559,7 +564,7 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
         await bot.send_message(chat_id, f"❌ {e}")
         return
 
-    if session.game_type in (GameType.CLASSIC, GameType.NO_TRAITORS, GameType.ALL_TRAITORS):
+    if session.game_type in (GameType.CLASSIC, GameType.NO_TRAITORS, GameType.ALL_TRAITORS, GameType.BLIND_SPY):
         session.state = GameState.DESCRIBING
     elif session.game_type == GameType.QUESTIONS:
         session.state = GameState.QUESTIONING
@@ -573,6 +578,7 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
         GameType.QUESTIONS: "❓ Вопросы",
         GameType.NO_TRAITORS: "👤 Все мирные (🎲 рандом!)",
         GameType.ALL_TRAITORS: "🕵️ Все шпионы (🎲 рандом!)",
+        GameType.BLIND_SPY: "🎭 Слепой шпион",
     }
     game_type_text = game_type_map.get(session.game_type, "📝 Классика")
     spy_text = f"{session.spy_count} шпион(ов)"
@@ -598,6 +604,8 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
                 text = f"🎭 <b>ПУТАНИК</b>\n\nТвой персонаж: <code>{p.alt_character}</code>\n⚠️ Это НЕ настоящий персонаж!"
             elif p.role == Role.PROVOCATEUR:
                 text = f"🎭 <b>ПРОВОКАТОР</b>\n\nТвой персонаж: <code>{p.fake_character}</code>\nЭто другой персонаж из той же категории."
+            elif session.game_type == GameType.BLIND_SPY:
+                text = f"🎭 <b>МИРНЫЙ</b>\n\nТвой персонаж: <code>{p.fake_character}</code>\n\nГовори 1 признак вслух. Имя не называй."
             else:
                 text = "🎭 <b>ШПИОН</b>\n\nТы не знаешь персонажа. Слушай других.\n/hint — подсказка (1 раз)\n/guess Имя — угадать!"
             await bot.send_message(p.user_id, text)
@@ -665,7 +673,7 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
         randomize_settings(session)
 
     # 10% шанс — случайный спецрежим (только в классике)
-    if session.game_type == GameType.CLASSIC and _random.random() < 0.10:
+    if _random.random() < 0.05:
         session.game_type = _random.choice([GameType.NO_TRAITORS, GameType.ALL_TRAITORS])
 
     # Проверяем, есть ли персонажи в выбранных категориях
@@ -712,7 +720,7 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
         return
     
     # Устанавливаем состояние в зависимости от типа игры
-    if session.game_type in (GameType.CLASSIC, GameType.NO_TRAITORS, GameType.ALL_TRAITORS):
+    if session.game_type in (GameType.CLASSIC, GameType.NO_TRAITORS, GameType.ALL_TRAITORS, GameType.BLIND_SPY):
         session.state = GameState.DESCRIBING
     elif session.game_type == GameType.QUESTIONS:
         session.state = GameState.QUESTIONING
@@ -727,6 +735,7 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
         GameType.QUESTIONS: "❓ Вопросы",
         GameType.NO_TRAITORS: "👤 Все мирные (🎲 рандом!)",
         GameType.ALL_TRAITORS: "🕵️ Все шпионы (🎲 рандом!)",
+        GameType.BLIND_SPY: "🎭 Слепой шпион",
     }
     game_type_text = game_type_map.get(session.game_type, "📝 Классика")
     provocateur_text = "да" if session.provocateur_enabled else "нет"
@@ -782,6 +791,14 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
 
 ⚠️ Подсказки отключены.
 /guess Имя — угадать и победить!
+""".strip()
+                elif session.game_type == GameType.BLIND_SPY:
+                    text = f"""
+🎭 <b>МИРНЫЙ</b>
+
+Твой персонаж: <code>{p.fake_character}</code>
+
+Говори 1 признак вслух. Имя не называй.
 """.strip()
                 else:
                     text = """
@@ -855,7 +872,6 @@ async def _start_describing_phase(message: Message, session, bot: Bot):
     except Exception as e:
         logger.warning("Не удалось уведомить игрока (id=%d): %s", first_player.user_id, e)
 
-    await _start_turn_timer(session.chat_id, session, bot, msg)
     await lobby_service.persist_session(session)
 
 
@@ -943,6 +959,7 @@ async def cmd_status(message: Message):
         GameType.QUESTIONS: "❓ Вопросы",
         GameType.NO_TRAITORS: "👤 Все мирные",
         GameType.ALL_TRAITORS: "🕵️ Все шпионы",
+        GameType.BLIND_SPY: "🎭 Слепой шпион",
     }
     game_type_text = game_type_map.get(session.game_type, "📝 Классика")
     cat_name_text = get_category_name(session.categories)
@@ -1034,10 +1051,6 @@ async def cmd_kick(message: Message):
         await message.answer("🔒 Только создатель может исключать игроков.")
         return
     
-    if session.state != GameState.LOBBY:
-        await message.answer("⚠️ Исключать можно только в лобби.")
-        return
-    
     # Проверяем, есть ли реплай на сообщение
     if not message.reply_to_message:
         await message.answer(
@@ -1059,8 +1072,11 @@ async def cmd_kick(message: Message):
         return
     
     # Удаляем игрока
+    was_in_game = session.state != GameState.LOBBY
     session.players = [p for p in session.players if p.user_id != target_id]
     await message.answer(f"👢 <b>{target_name}</b> исключён из игры.")
+    if was_in_game:
+        await message.answer(f"🚪 <b>{target_name}</b> выбывает из игры.")
 
 
 @router.message(Command("addchar"))
@@ -1294,8 +1310,6 @@ async def _do_i_said(chat_id: int, user_id: int, bot: Bot, message):
         except Exception as e:
             logger.warning("Не удалось уведомить игрока (id=%d): %s", next_player.user_id, e)
 
-        await _start_turn_timer(chat_id, session, bot, msg)
-
     await lobby_service.persist_session(session)
 
 
@@ -1468,7 +1482,6 @@ async def cb_next_round(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.warning("Не удалось уведомить игрока (id=%d): %s", first_player.user_id, e)
 
-    await _start_turn_timer(chat_id, session, bot, msg)
     await lobby_service.persist_session(session)
 
 
@@ -1707,15 +1720,50 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
     outcome = result["outcome"]
     target_name = result["target"].full_name
 
+    if session.game_type == GameType.ALL_TRAITORS:
+        import random as _rand
+        target_player = result["target"]
+        session.players = [p for p in session.players if p.user_id != target_player.user_id]
+        remaining = len(session.players)
+        if _rand.random() < 0.5:
+            await bot.send_message(chat_id,
+                f"👤 <b>МИМО!</b>\n\n"
+                f"Большинство проголосовало за <b>{target_name}</b> — он мирный.\n"
+                f"🚪 <b>{target_name}</b> выбывает из игры.\nГолоса сброшены. Думайте дальше."
+            )
+        else:
+            await bot.send_message(chat_id,
+                f"🕵️ <b>ШПИОН ПОЙМАН!</b>\n\n"
+                f"<b>{target_name}</b> — шпион. "
+                f"Но остал{'ся' if remaining == 1 else 'ось'} ещё {remaining}!\n"
+                f"Голоса сброшены. Продолжайте."
+            )
+        if len(session.players) <= 1:
+            await bot.send_message(chat_id,
+                f"🏁 Игра окончена. Персонаж: <code>{session.character}</code>",
+                reply_markup=play_again_keyboard()
+            )
+            await record_stats(session, civilians_won=False)
+            await lobby_service.end_session(chat_id)
+            return
+        await _reset_votes(session)
+        return
+
     if outcome == "civilian_caught":
+        target_player = result["target"]
+        session.players = [p for p in session.players if p.user_id != target_player.user_id]
         await bot.send_message(chat_id,
-            f"👤 <b>МИМО!</b>\n\nБольшинство проголосовало за <b>{target_name}</b> — он мирный.\nГолоса сброшены. Думайте дальше."
+            f"👤 <b>МИМО!</b>\n\nБольшинство проголосовало за <b>{target_name}</b> — он мирный.\n"
+            f"🚪 <b>{target_name}</b> выбывает из игры.\nГолоса сброшены. Думайте дальше."
         )
         await _reset_votes(session)
 
     elif outcome == "provocateur_caught":
+        target_player = result["target"]
+        session.players = [p for p in session.players if p.user_id != target_player.user_id]
         await bot.send_message(chat_id,
-            f"🤡 <b>ПРОВОКАТОР!</b>\n\nБольшинство за <b>{target_name}</b> — это провокатор.\nОн играл за шпионов. Голоса сброшены."
+            f"🤡 <b>ПРОВОКАТОР!</b>\n\nБольшинство за <b>{target_name}</b> — это провокатор.\n"
+            f"🚪 <b>{target_name}</b> выбывает из игры.\nГолоса сброшены."
         )
         await _reset_votes(session)
 
