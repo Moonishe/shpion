@@ -304,3 +304,15 @@ def yes_no_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def skip_pause_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Кнопка пропуска паузы после раунда."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⏩ Пропустить паузу",
+                callback_data=f"skip_pause_{chat_id}"
+            )],
+        ]
+    )

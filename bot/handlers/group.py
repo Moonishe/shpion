@@ -1294,6 +1294,7 @@ async def cmd_clearchars(message: Message):
 
 _reroll_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted yes
 _cancel_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to cancel
+_skip_pause: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to skip pause
 
 # Таймеры авто-пропуска хода
 _turn_timers: dict[int, asyncio.Task] = {}  # chat_id -> timer task
@@ -1363,10 +1364,24 @@ async def _do_i_said(chat_id: int, user_id: int, bot: Bot, message):
         session.state = GameState.DISCUSSION
         await lobby_service.persist_session(session)
 
-        await bot.send_message(chat_id,
-            f"🎉 <b>Раунд завершён!</b> Пауза 1 минута..."
+        total = len(session.players)
+        skip_needed = int(total * 0.75) + 1
+        _skip_pause[chat_id] = set()
+        from bot.keyboards.inline import skip_pause_keyboard
+        pause_msg = await bot.send_message(chat_id,
+            f"🎉 <b>Раунд завершён!</b> Пауза 2 минуты.\n\n⏩ Пропустить: 0/{skip_needed}",
+            reply_markup=skip_pause_keyboard(chat_id),
         )
-        await asyncio.sleep(60)
+        for _ in range(120):
+            await asyncio.sleep(1)
+            votes = _skip_pause.get(chat_id, set())
+            if len(votes) >= skip_needed:
+                break
+        _skip_pause.pop(chat_id, None)
+        try:
+            await pause_msg.edit_text("🎉 <b>Раунд завершён!</b>")
+        except Exception:
+            pass
 
         await bot.send_message(chat_id, """
 ⏰ <b>Что дальше?</b>
@@ -1833,7 +1848,24 @@ async def _reset_votes(session):
     session.state = GameState.DISCUSSION
     _cancel_votes.pop(session.chat_id, None)
     update_session_activity(session)
-    await lobby_service.persist_session(session)
+    await lobby_service.persist_session(session    )
+
+
+@router.callback_query(F.data.startswith("skip_pause_"))
+async def cb_skip_pause(callback: CallbackQuery):
+    try:
+        chat_id = int(callback.data.split("_")[2])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка данных.", show_alert=True)
+        return
+    votes = _skip_pause.get(chat_id)
+    if votes is None:
+        await callback.answer("⏳ Пауза уже закончилась.", show_alert=True)
+        return
+    votes.add(callback.from_user.id)
+    total = len(lobby_service.get_session(chat_id).players) if lobby_service.get_session(chat_id) else 1
+    skip_needed = int(total * 0.75) + 1
+    await callback.answer(f"⏩ Принято ({len(votes)}/{skip_needed})")
 
 
 @router.callback_query(F.data.startswith("cancel_vote_"))
