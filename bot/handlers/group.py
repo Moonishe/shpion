@@ -1383,6 +1383,10 @@ async def _do_i_said(chat_id: int, user_id: int, bot: Bot, message):
         except Exception:
             pass
 
+        session = lobby_service.get_session(chat_id)
+        if not session or session.state != GameState.DISCUSSION:
+            return
+
         await bot.send_message(chat_id, """
 ⏰ <b>Что дальше?</b>
 

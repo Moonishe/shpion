@@ -302,13 +302,14 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
     cnt = len(spis)
     if (round_num - 1) % cnt != 0:
         return
-    types = random.sample(HINT_TYPES, min(cnt, len(HINT_TYPES)))
+    hint_count = min(round_num // 2, len(HINT_TYPES))
     for i, spy in enumerate(spis):
-        hint_type = types[i % len(types)]
-        hint_text = get_hint_for_spy(session, hint_type)
+        spy_types = random.sample(HINT_TYPES, hint_count)
+        hints = [get_hint_for_spy(session, t) for t in spy_types]
+        hint_text = "\n".join(hints)
         try:
             await bot.send_message(spy.user_id,
-                f"💡 <b>Раунд {round_num} — подсказка</b>\n\n{hint_text}"
+                f"💡 <b>Раунд {round_num} — подсказка ({hint_count} шт.)</b>\n\n{hint_text}"
             )
             spy.hint_used = True
         except Exception:
