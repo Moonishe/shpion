@@ -302,7 +302,7 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
     cnt = len(spis)
     if (round_num - 1) % cnt != 0:
         return
-    hint_count = min(round_num // 2, len(HINT_TYPES))
+    hint_count = min(round_num - 1, len(HINT_TYPES))
     for i, spy in enumerate(spis):
         spy_types = random.sample(HINT_TYPES, hint_count)
         hints = [get_hint_for_spy(session, t) for t in spy_types]
