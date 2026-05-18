@@ -469,3 +469,8 @@ async def cmd_setchar(message: Message):
         f"или отправь ещё один <code>/setchar</code>.",
         reply_markup=host_confirm_keyboard(session.chat_id)
     )
+
+
+@router.message(Command("version"))
+async def cmd_version_private(message: Message):
+    await message.answer("🎭 <b>Шпион</b> v1.1\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")

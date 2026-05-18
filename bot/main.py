@@ -24,6 +24,7 @@ PRIVATE_COMMANDS = [
     BotCommand(command="hint", description="💡 Получить подсказку (для шпиона)"),
     BotCommand(command="send", description="💌 Написать тайное письмо"),
     BotCommand(command="mystats", description="📊 Моя статистика"),
+    BotCommand(command="version", description="ℹ️ Версия бота"),
 ]
 
 # Команды для групп
@@ -40,6 +41,7 @@ GROUP_COMMANDS = [
     BotCommand(command="listchars", description="📋 Список кастомных персонажей"),
     BotCommand(command="help", description="❓ Помощь и правила"),
     BotCommand(command="reroll", description="🔄 Перевыбрать персонажа"),
+    BotCommand(command="version", description="ℹ️ Версия бота"),
 ]
 
 

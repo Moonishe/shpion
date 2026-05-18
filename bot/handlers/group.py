@@ -1924,8 +1924,12 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             await callback.message.edit_text(
                 f"🗳️ <b>Голосование</b> ({voted}/{total}) — все проголосовали, консенсуса нет."
             )
-            await _reset_votes(session)
-        return
+        await _reset_votes(session)
+
+
+@router.message(Command("version"))
+async def cmd_version_group(message: Message):
+    await message.answer("🎭 <b>Шпион</b> v1.1\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
 
     outcome = result["outcome"]
     target_name = result["target"].full_name
