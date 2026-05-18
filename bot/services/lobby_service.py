@@ -61,9 +61,9 @@ def set_mode(session: GameSession, mode: GameMode) -> None:
     session.mode = mode
 
 
-def start_game(session: GameSession) -> None:
+async def start_game(session: GameSession) -> None:
     from bot.services.game_service import assign_roles
-    assign_roles(session)
+    await assign_roles(session)
 
 
 def reset_sessions():

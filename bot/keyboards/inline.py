@@ -123,13 +123,13 @@ def category_keyboard(session) -> InlineKeyboardMarkup:
     """Выбор категорий персонажей (toggler)."""
     from bot.models.game import GameSession
     categories = get_categories()
-    selected = session.categories if hasattr(session, 'categories') else ["all"]
+    selected = session.categories if hasattr(session, 'categories') else ["*"]
     
-    all_selected = "all" in selected
+    all_selected = "*" in selected
     all_btn = "☑️ Все категории" if all_selected else "⬜ Все категории"
     
     buttons = [
-        [InlineKeyboardButton(text=all_btn, callback_data="toggle_cat_all")],
+        [InlineKeyboardButton(text=all_btn, callback_data="toggle_cat_*")],
     ]
     
     for cat_id, cat_data in categories.items():
@@ -138,7 +138,7 @@ def category_keyboard(session) -> InlineKeyboardMarkup:
         emoji = cat_data.get("emoji", "")
         name = cat_data.get("name", cat_id)
         count = len(cat_data.get("characters", []))
-        is_sel = cat_id in selected and not all_selected and "all" not in selected
+        is_sel = cat_id in selected and not all_selected and "*" not in selected
         prefix = "☑️" if is_sel else "⬜"
         buttons.append([
             InlineKeyboardButton(
@@ -183,35 +183,26 @@ def start_vote_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def vote_keyboard(chat_id: int, players: list) -> InlineKeyboardMarkup:
-    """Клавиатура голосования за игроков."""
+def vote_keyboard(chat_id: int, players: list, votes: dict[int, int] = None) -> InlineKeyboardMarkup:
+    """Клавиатура голосования за игроков с отменой."""
+    if votes is None:
+        votes = {}
     buttons = []
     for p in players:
+        cnt = votes.get(p.user_id, 0)
+        cnt_text = f" ({cnt})" if cnt > 0 else ""
         buttons.append([
             InlineKeyboardButton(
-                text=f"🎯 {p.full_name}",
+                text=f"🎯 {p.full_name}{cnt_text}",
                 callback_data=f"vote_{chat_id}_{p.user_id}"
             )
         ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def hint_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора подсказки для шпиона."""
-    buttons = [
-        [
-            InlineKeyboardButton(text="🎲 Случ. буква", callback_data="hint_random_letter"),
-            InlineKeyboardButton(text="🔤 Первая буква", callback_data="hint_first_letter"),
-        ],
-        [
-            InlineKeyboardButton(text="🔤 Последняя буква", callback_data="hint_last_letter"),
-            InlineKeyboardButton(text="📏 Длина имени", callback_data="hint_length"),
-        ],
-        [
-            InlineKeyboardButton(text="📝 Кол-во слов", callback_data="hint_word_count"),
-            InlineKeyboardButton(text="📂 Категория", callback_data="hint_category"),
-        ],
-    ]
+    buttons.append([
+        InlineKeyboardButton(
+            text="❌ Отменить голосование",
+            callback_data=f"cancel_vote_{chat_id}"
+        )
+    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

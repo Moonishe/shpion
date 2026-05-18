@@ -1,3 +1,4 @@
+import html
 import time
 import re
 import logging
@@ -38,13 +39,13 @@ def normalize_for_comparison(s: str) -> str:
     # е ↔ ё
     s = s.replace('ё', 'е')
     # Убираем пробелы и пунктуацию
-    s = re.sub(r'[^\wа-яёa-z0-9]', '', s)
+    s = re.sub(r'[^a-zа-яё0-9]', '', s)
+    # Числа словами → цифры (должны быть до транслита)
+    for word, digit in sorted(_NUM_MAP.items(), key=lambda x: -len(x[0])):
+        s = s.replace(word, digit)
     # Транслит → кириллица (двухбуквенные сначала)
     for t, c in sorted(_TRANS_MAP.items(), key=lambda x: -len(x[0])):
         s = s.replace(t, c)
-    # Числа словами → цифры
-    for word, digit in sorted(_NUM_MAP.items(), key=lambda x: -len(x[0])):
-        s = s.replace(word, digit)
     return s
 
 
@@ -75,11 +76,16 @@ def guess_matches(guess: str, character: str) -> bool:
 
 # Рейт-лимит: {user_id: last_command_time}
 _rate_limit: dict[int, float] = {}
+_last_rate_limit_cleanup: float = 0.0
 
 
 def check_rate_limit(user_id: int, cooldown: float = 1.0) -> bool:
     """Проверяет рейт-лимит. Возвращает True если можно, False если рано."""
+    global _rate_limit, _last_rate_limit_cleanup
     now = time.time()
+    if now - _last_rate_limit_cleanup >= 60:
+        _rate_limit = {uid: t for uid, t in _rate_limit.items() if now - t < 300}
+        _last_rate_limit_cleanup = now
     last = _rate_limit.get(user_id, 0.0)
     if now - last < cooldown:
         return False
@@ -97,7 +103,7 @@ async def record_stats(session, civilians_won: bool = True, spy_guess: bool = Fa
     from bot.models.database import update_stats
     for p in session.players:
         if p.role == Role.SPY or p.role == Role.PROVOCATEUR:
-            won = spy_guess
+            won = spy_guess or not civilians_won
         else:
             won = civilians_won
         try:
@@ -118,7 +124,7 @@ def randomize_settings(session: GameSession) -> None:
     session.categories = random.sample(all_cats, k=random.randint(1, min(3, len(all_cats))))
 
     # Рандомный тип игры
-    session.game_type = random.choice([GameType.CLASSIC, GameType.QUESTIONS])
+    session.game_type = random.choice([GameType.CLASSIC, GameType.QUESTIONS, GameType.BLIND_SPY])
 
     # Рандомное количество шпионов (зависит от числа игроков)
     num_players = len(session.players)
@@ -142,8 +148,21 @@ def randomize_settings(session: GameSession) -> None:
         session.provocateur_enabled = False
 
 
-def assign_roles(session: GameSession, pick_character: bool = True) -> None:
-    """Распределяет роли и выбирает персонажа."""
+def _weighted_choice_idx(weights: list[float]) -> int:
+    total = sum(weights)
+    if total <= 0:
+        return random.randrange(len(weights))
+    r = random.random() * total
+    cum = 0.0
+    for i, w in enumerate(weights):
+        cum += w
+        if r <= cum:
+            return i
+    return len(weights) - 1
+
+
+async def assign_roles(session: GameSession, pick_character: bool = True) -> None:
+    """Распределяет роли и выбирает персонажа (взвешенно по истории)."""
     characters = get_characters_by_category(session.categories)
     if not characters:
         raise ValueError("Нет персонажей в выбранных категориях!")
@@ -173,48 +192,70 @@ def assign_roles(session: GameSession, pick_character: bool = True) -> None:
         spy_target = random.choice(session.players)
         spy_target.role = Role.SPY
         spy_target.fake_character = fake_char
+        session.spy_count = 1
+        session.mode = GameMode.ONE_SPY
         session.state = GameState.ROLE_DISTRIBUTION
         return
 
-    # Перемешиваем игроков для случайного распределения
-    ordered = session.players[:]
-    random.shuffle(ordered)
+    from bot.models.database import get_streaks, update_streaks
+    streaks = await get_streaks([p.user_id for p in session.players])
 
-    total = len(ordered)
-    civilian_pool = ordered[spy_count:]
+    total = len(session.players)
+    players = session.players[:]
+    ids = [p.user_id for p in players]
 
-    # Провокатор (из civilians)
-    prov_idx = -1
-    if session.provocateur_enabled and total >= 4 and len(civilian_pool) >= 1:
-        prov_idx = spy_count + random.choice(range(len(civilian_pool)))
+    # Веса для шпионов: 1 / 2^streak
+    spy_weights = [1.0 / (2 ** streaks.get(uid, {}).get("spy", 0)) for uid in ids]
+    spy_ids_set: set[int] = set()
+    available = list(range(total))
+    for _ in range(spy_count):
+        if not available:
+            break
+        avail_weights = [spy_weights[i] for i in available]
+        idx = _weighted_choice_idx(avail_weights)
+        chosen = available.pop(idx)
+        spy_ids_set.add(ids[chosen])
 
-    # Путаник (из civilians, не провокатор)
-    conf_idx = -1
+    # Провокатор (из не-шпионов)
+    prov_id = None
+    if session.provocateur_enabled and total >= 4 and len(spy_ids_set) < total:
+        prov_candidates = [p for p in players if p.user_id not in spy_ids_set]
+        prov_weights = [1.0 / (2 ** streaks.get(p.user_id, {}).get("prov", 0)) for p in prov_candidates]
+        if prov_candidates:
+            idx = _weighted_choice_idx(prov_weights)
+            prov_id = prov_candidates[idx].user_id
+
+    # Путаник
+    conf_id = None
     alt_char = None
-    conf_available = [i for i in range(spy_count, total) if i != prov_idx]
-    if total >= 7 and conf_available and len(characters) >= 2:
+    conf_candidates = [p for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id]
+    if total >= 7 and conf_candidates and len(characters) >= 2:
         chance = 0.25 if total <= 9 else (0.5 if total == 10 else 0.75)
         if random.random() < chance:
             session.confused_enabled = True
-            conf_idx = random.choice(conf_available)
+            conf_id = random.choice(conf_candidates).user_id
             other_chars = [c for c in characters if c != session.character]
             alt_char = random.choice(other_chars) if other_chars else None
 
     # Раздаём роли
-    for i, p in enumerate(ordered):
-        if i < spy_count:
+    for p in session.players:
+        if p.user_id in spy_ids_set:
             p.role = Role.SPY
-        elif i == prov_idx:
+        elif p.user_id == prov_id:
             p.role = Role.PROVOCATEUR
             others = [c for c in characters if c != session.character]
             p.fake_character = random.choice(others) if others else "Загадочный незнакомец"
-        elif i == conf_idx and alt_char:
+        elif p.user_id == conf_id and alt_char:
             p.role = Role.CONFUSED
             p.alt_character = alt_char
         else:
             p.role = Role.CIVILIAN
 
     session.state = GameState.ROLE_DISTRIBUTION
+
+    # Обновляем стрики
+    prov_ids = [prov_id] if prov_id else []
+    await update_streaks(list(spy_ids_set), prov_ids, [p.user_id for p in session.players])
 
 
 def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
@@ -226,28 +267,50 @@ def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
         if letter_positions:
             pos = random.choice(letter_positions)
             letter = character[pos].upper()
-            return f"🎲 Буква на позиции {pos + 1}: <b>{letter}</b>"
+            return f"🎲 Буква на позиции {pos + 1}: <b>{html.escape(letter)}</b>"
         else:
-            return f"🎲 Буква на позиции 1: <b>{character[0].upper()}</b>"
+            return f"🎲 Буква на позиции 1: <b>{html.escape(character[0].upper())}</b>"
     elif hint_type == "first_letter":
         first = character[0].upper() if character else "?"
-        return f"🔤 Первая буква: <b>{first}</b>"
+        return f"🔤 Первая буква: <b>{html.escape(first)}</b>"
     elif hint_type == "last_letter":
         last = character[-1].upper() if character else "?"
-        return f"🔤 Последняя буква: <b>{last}</b>"
+        return f"🔤 Последняя буква: <b>{html.escape(last)}</b>"
     elif hint_type == "length":
         return f"📏 Длина имени: <b>{len(character)}</b> символов"
-    elif hint_type == "word_count":
-        words = character.split()
-        word_str = "слово" if len(words) == 1 else ("слова" if 2 <= len(words) <= 4 else "слов")
-        return f"📝 Количество слов: <b>{len(words)}</b> {word_str}"
-    elif hint_type == "category":
-        from bot.config import get_category_name, get_characters_by_category
-        cats = session.categories
-        cat_name = get_category_name(cats)
-        return f"📂 Категория: <b>{cat_name}</b>"
 
     return "❌ Неизвестный тип подсказки"
+
+
+HINT_TYPES = ["random_letter", "first_letter", "last_letter", "length"]
+
+
+async def send_auto_hints(session: GameSession, bot, round_num: int):
+    if round_num <= 1:
+        return
+    spis = [p for p in session.players if p.role == Role.SPY]
+    if not spis:
+        return
+    cnt = len(spis)
+    if (round_num - 1) % cnt != 0:
+        return
+    types = random.sample(HINT_TYPES, min(cnt, len(HINT_TYPES)))
+    for i, spy in enumerate(spis):
+        hint_type = types[i % len(types)]
+        hint_text = get_hint_for_spy(session, hint_type)
+        try:
+            await bot.send_message(spy.user_id,
+                f"💡 <b>Раунд {round_num} — подсказка</b>\n\n{hint_text}"
+            )
+            spy.hint_used = True
+        except Exception:
+            pass
+    civilians = [p for p in session.players if p.role != Role.SPY]
+    for p in civilians:
+        try:
+            await bot.send_message(p.user_id, "🔔 Шпионы получили подсказку.")
+        except Exception:
+            pass
 
 
 def check_all_described(session: GameSession) -> bool:
@@ -270,11 +333,23 @@ def process_vote_result(session: GameSession) -> dict | None:
     Требуется >75% участия для раскрытия результата.
     """
     most_voted, count = get_most_voted(session)
-    if most_voted is None:
-        return None
-
     total = len(session.players)
     voted = sum(1 for p in session.players if p.vote_for is not None)
+
+    if most_voted is None:
+        if voted == total and total == 2:
+            votes = count_votes(session)
+            candidates = [uid for uid, cnt in votes.items() if cnt == count]
+            if len(candidates) == 2:
+                spy_candidates = [uid for uid in candidates if session.get_player(uid) and session.get_player(uid).role == Role.SPY]
+                most_voted = spy_candidates[0] if spy_candidates else candidates[0]
+                if most_voted is None:
+                    return None
+            else:
+                return None
+        else:
+            return None
+
     target = session.get_player(most_voted)
 
     if not target:
@@ -345,10 +420,11 @@ def create_turn_order(session: GameSession) -> list[Player]:
     # Собираем очередь
     order = civilians[:]
     
-    # Вставляем шпионов с ранними позициями
-    for spy, pos in spy_positions:
-        if pos is not None:
-            order.insert(pos, spy)
+    # Вставляем шпионов с ранними позициями (от большего к меньшему, чтобы не сдвигать)
+    early_spies = [(spy, pos) for spy, pos in spy_positions if pos is not None]
+    early_spies.sort(key=lambda x: x[1], reverse=True)
+    for spy, pos in early_spies:
+        order.insert(pos, spy)
     
     # Добавляем остальных шпионов в конец
     for spy, pos in spy_positions:
@@ -360,7 +436,12 @@ def create_turn_order(session: GameSession) -> list[Player]:
 
 def get_next_player(session: GameSession) -> Player | None:
     """Возвращает следующего игрока для описания."""
-    for p in session.players:
+    n = len(session.players)
+    if n == 0:
+        return None
+    for i in range(n):
+        idx = (session.current_turn_index + i) % n
+        p = session.players[idx]
         if not p.has_described:
             return p
     return None
@@ -386,49 +467,12 @@ def get_most_voted(session: GameSession) -> tuple[int | None, int]:
 
 
 def check_victory(session: GameSession) -> str | None:
-    # В режиме NO_TRAITORS нет шпионов - проверка победы не работает как обычно
     if session.game_type == GameType.NO_TRAITORS:
-        # Шпионы не могут победить, так как их нет
-        # Мирные могут голосовать, но никто не победит
         return None
 
-    # Шпион угадал персонажа (гибкое сравнение: цифры↔слова, транслит)
     if session.spy_guess and guess_matches(session.spy_guess, session.character):
-        # В режиме ALL_TRAITORS шпион победил
         if session.game_type == GameType.ALL_TRAITORS:
             return "all_traitors_win"
         return "spy_guess"
 
-    # Голосование мирных
-    most_voted, count = get_most_voted(session)
-    if most_voted is not None:
-        total_players = len(session.players)
-        # Большинство (больше половины) или все проголосовали
-        voted = sum(1 for p in session.players if p.vote_for is not None)
-        target = session.get_player(most_voted)
-
-        if not target:
-            return None
-
-        # Если проголосовали за мирного — ошибка!
-        if target.role in (Role.CIVILIAN, Role.CONFUSED) and voted >= total_players // 2 + 1:
-            return "civilian_caught"
-
-        # Если проголосовали за провокатора — спровоцированы!
-        if target.role == Role.PROVOCATEUR and voted >= total_players // 2 + 1:
-            return "provocateur_caught"
-
-        # Если проголосовали за шпиона
-        if target.role == Role.SPY and voted >= total_players // 2 + 1:
-            # Проверяем, остались ли ещё шпионы
-            remaining_spies = sum(1 for p in session.players if p.role == Role.SPY and p.user_id != target.user_id)
-            if remaining_spies > 0:
-                return "spy_caught_continue"
-            return "civilians"
-
-        # Если проголосовали все — и ничья, объявляем ничью/продолжение
-        if voted == total_players:
-            # Если за шпиона проголосовало меньше половины
-            if target.role == Role.SPY and count < total_players // 2 + 1:
-                return None
     return None

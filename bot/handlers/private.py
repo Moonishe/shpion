@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 
 from aiogram import Router, Bot, F
@@ -8,10 +9,10 @@ from aiogram.filters import Command
 from bot.models.game import Role, GameType, GameState
 from bot.services import lobby_service
 from bot.services.game_service import (
-    check_victory, get_hint_for_spy, check_all_described, get_next_player,
+    check_victory, check_all_described, get_next_player,
     check_rate_limit, update_session_activity, record_stats
 )
-from bot.keyboards.inline import hint_keyboard, play_again_keyboard, i_said_keyboard, round_end_keyboard, host_confirm_keyboard
+from bot.keyboards.inline import play_again_keyboard, i_said_keyboard, round_end_keyboard, host_confirm_keyboard
 from bot.models.database import save_letter
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ async def cmd_guess(message: Message, bot: Bot):
         await bot.send_message(session.chat_id, f"""
 🕵️ <b>ШПИОН ПОБЕДИЛ!</b>
 
-<b>{message.from_user.full_name}</b> угадал: <code>{session.character}</code>
+<b>{html.escape(message.from_user.full_name)}</b> угадал: <code>{html.escape(session.character)}</code>
 """.strip(), reply_markup=play_again_keyboard())
 
         await message.answer("🎉 Ты угадал! Победа за шпионами!")
@@ -121,7 +122,7 @@ async def cmd_guess(message: Message, bot: Bot):
         await bot.send_message(session.chat_id, f"""
 👿 <b>ПОБЕДИТЕЛЬ!</b>
 
-<b>{message.from_user.full_name}</b> угадал первым: <code>{session.character}</code>
+<b>{html.escape(message.from_user.full_name)}</b> угадал первым: <code>{html.escape(session.character)}</code>
 Все были предателями!
 """.strip(), reply_markup=play_again_keyboard())
 
@@ -131,7 +132,7 @@ async def cmd_guess(message: Message, bot: Bot):
         await lobby_service.end_session(session.chat_id)
     else:
         await message.answer(f"""
-❌ Мимо. <code>{guess}</code> — не тот персонаж.
+❌ Мимо. <code>{html.escape(guess)}</code> — не тот персонаж.
 
 Слушай дальше, пробуй снова.
 """.strip())
@@ -171,58 +172,12 @@ async def cmd_hint(message: Message):
         await message.answer("🎭 Ты мирный, подсказки не для тебя. Слушай описания.")
         return
 
-    if player.hint_used:
-        await message.answer("⚠️ Ты уже брал подсказку. 1 раз за игру.")
-        return
-
-    await message.answer("💡 <b>Выбери подсказку</b> (только 1 раз!)", reply_markup=hint_keyboard())
+    await message.answer("💡 Подсказки приходят автоматически каждый раунд. Жди.")
 
 
 @router.callback_query(F.data.startswith("hint_"))
 async def cb_hint(callback: CallbackQuery):
-    """Выбор типа подсказки."""
-    user_id = callback.from_user.id
-    hint_type = callback.data.replace("hint_", "")
-
-    # Находим сессию
-    session = None
-    player = None
-    for s in lobby_service.get_all_sessions():
-        p = s.get_player(user_id)
-        if p and p.role == Role.SPY:
-            session = s
-            player = p
-            break
-
-    if not session or not player:
-        await callback.answer("🎭 Ты мирный, подсказки не для тебя.", show_alert=True)
-        return
-
-    if session.game_type == GameType.ALL_TRAITORS:
-        await callback.answer("🚫 Подсказки отключены!", show_alert=True)
-        return
-
-    if session.game_type == GameType.BLIND_SPY:
-        await callback.answer("🎭 Ты мирный, подсказки не для тебя.", show_alert=True)
-        return
-
-    if player.hint_used:
-        await callback.answer("⚠️ Уже использовал!", show_alert=True)
-        return
-
-    player.hint_used = True
-    await lobby_service.persist_session(session)
-
-    hint_text = get_hint_for_spy(session, hint_type)
-
-    await callback.answer("💡 Готово!")
-    await callback.message.edit_text(f"""
-💡 <b>ТВОЯ ПОДСКАЗКА</b>
-
-{hint_text}
-
-Угадай: <code>/guess Имя</code>
-""".strip())
+    await callback.answer("💡 Подсказки приходят автоматически каждый раунд.", show_alert=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -265,17 +220,16 @@ async def cb_i_said(callback: CallbackQuery, bot: Bot):
     await callback.message.edit_text("✅ Ты сказал. Жди остальных.")
     update_session_activity(session)
 
-    await bot.send_message(chat_id, f"✅ <b>{current.full_name}</b> сказал!")
+    await bot.send_message(chat_id, f"✅ <b>{html.escape(current.full_name)}</b> сказал!")
 
     if check_all_described(session):
-        session.description_round += 1
         session.state = GameState.DISCUSSION
         await lobby_service.persist_session(session)
 
         await bot.send_message(chat_id,
-            f"🎉 <b>Раунд!</b> Пауза 10 сек... Шпион: <code>/guess Имя</code>"
+            f"🎉 <b>Раунд завершён!</b> Пауза 1 минута..."
         )
-        await asyncio.sleep(10)
+        await asyncio.sleep(60)
 
         await bot.send_message(chat_id, """
 ⏰ <b>Что дальше?</b>
@@ -289,7 +243,7 @@ async def cb_i_said(callback: CallbackQuery, bot: Bot):
     if next_player:
         round_hint = "⚠️ Говори максимально обобщённо!" if session.description_round <= 2 else ""
         await bot.send_message(chat_id,
-            f"🗣️ <b>{next_player.full_name}</b>, говори! 1 признак вслух."
+            f"🗣️ <b>{html.escape(next_player.full_name)}</b>, говори! 1 признак вслух."
             + (f"\n{round_hint}" if round_hint else "")
         )
 
@@ -366,17 +320,13 @@ async def cmd_send(message: Message, bot: Bot):
         return
     args = message.text.split(maxsplit=2)
 
-    reply_target = None
-    if message.reply_to_message and len(args) == 1:
-        reply_target = message.reply_to_message.from_user
-        target_username = reply_target.full_name if reply_target else ""
-        letter_text = ""
-    elif message.reply_to_message and len(args) >= 2:
-        target_username = args[1].strip()
-        letter_text = args[2].strip()
-        if not letter_text:
-            letter_text = target_username
-            target_username = message.reply_to_message.from_user.full_name if message.reply_to_message else letter_text
+    if message.reply_to_message and len(args) >= 2:
+        if len(args) >= 3:
+            target_username = args[1].strip()
+            letter_text = args[2].strip()
+        else:
+            target_username = message.reply_to_message.from_user.full_name
+            letter_text = args[1].strip()
     elif len(args) < 3:
         await message.answer(
             "💌 <code>/send @username Текст</code>\nПример: <code>/send @ivan Думаю, ты шпион...</code>\n\nИли ответь на сообщение: /send Текст"
@@ -448,13 +398,14 @@ async def cmd_send(message: Message, bot: Bot):
     target_player.received_letters[player.user_id] = letter_text
     await save_letter(session.chat_id, player.user_id, target_player.user_id, letter_text)
 
-    await message.answer(f"✅ Отправлено <b>{target_player.full_name}</b>!\n📝 <i>{letter_text}</i>")
+    safe_letter_text = html.escape(letter_text)
+    await message.answer(f"✅ Отправлено <b>{html.escape(target_player.full_name)}</b>!\n📝 <i>{safe_letter_text}</i>")
 
     try:
         await bot.send_message(target_player.user_id, f"""
-💌 <b>ПИСЬМО</b> от <b>{player.full_name}</b>
+💌 <b>ПИСЬМО</b> от <b>{html.escape(player.full_name)}</b>
 
-<i>{letter_text}</i>
+<i>{safe_letter_text}</i>
 """.strip())
     except Exception as e:
         logger.warning("Не удалось доставить письмо (id=%d): %s", target_player.user_id, e)
@@ -494,11 +445,15 @@ async def cmd_setchar(message: Message):
         await message.answer("🚫 Ты не ведущий в активной игре.")
         return
 
+    if session.state != GameState.LOBBY:
+        await message.answer("🚫 Нельзя менять персонажа во время игры.")
+        return
+
     session.character = char_name
     await lobby_service.persist_session(session)
 
     await message.answer(
-        f"✅ Персонаж установлен: <code>{char_name}</code>\n\n"
+        f"✅ Персонаж установлен: <code>{html.escape(char_name)}</code>\n\n"
         f"Нажми ✅ Оставить чтобы начать игру, "
         f"или отправь ещё один <code>/setchar</code>.",
         reply_markup=host_confirm_keyboard(session.chat_id)

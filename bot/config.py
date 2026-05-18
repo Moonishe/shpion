@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -24,6 +25,8 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "bot.db"
 CHARACTERS_PATH = DATA_DIR / "characters.json"
 
+_char_lock = threading.Lock()
+
 
 def load_characters_data() -> dict:
     """Загружает полные данные персонажей с категориями."""
@@ -44,7 +47,7 @@ def get_characters_by_category(categories_list: list[str] | None = None) -> list
     data = load_characters_data()
     all_cats = data.get("categories", {})
     
-    if not categories_list or "all" in categories_list:
+    if not categories_list or "*" in categories_list:
         all_chars = []
         for cat_data in all_cats.values():
             all_chars.extend(cat_data.get("characters", []))
@@ -59,54 +62,61 @@ def get_characters_by_category(categories_list: list[str] | None = None) -> list
 
 def save_characters_data(data: dict) -> None:
     """Сохраняет данные персонажей в файл."""
-    with open(CHARACTERS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with _char_lock:
+        with open(CHARACTERS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def add_custom_character(character: str) -> bool:
     """Добавляет кастомного персонажа. Возвращает True если успешно."""
-    data = load_characters_data()
-    categories = data.get("categories", {})
-    
-    # Создаём категорию custom если её нет
-    if "custom" not in categories:
-        categories["custom"] = {
-            "name": "Кастомные",
-            "emoji": "✨",
-            "characters": []
-        }
-    
-    custom_chars = categories["custom"].get("characters", [])
-    
-    # Проверяем, нет ли уже такого персонажа
-    if character in custom_chars:
-        return False
-    
-    custom_chars.append(character)
-    categories["custom"]["characters"] = custom_chars
-    data["categories"] = categories
-    save_characters_data(data)
-    return True
+    with _char_lock:
+        data = load_characters_data()
+        categories = data.get("categories", {})
+
+        for cat_data in categories.values():
+            if character in cat_data.get("characters", []):
+                return False
+
+        if "custom" not in categories:
+            categories["custom"] = {
+                "name": "Кастомные",
+                "emoji": "✨",
+                "characters": []
+            }
+
+        custom_chars = categories["custom"].get("characters", [])
+        custom_chars.append(character)
+        categories["custom"]["characters"] = custom_chars
+        data["categories"] = categories
+        save_characters_data_nolock(data)
+        return True
+
+
+def save_characters_data_nolock(data: dict) -> None:
+    """Сохраняет данные персонажей в файл (без блокировки)."""
+    with open(CHARACTERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def remove_custom_character(character: str) -> bool:
     """Удаляет кастомного персонажа. Возвращает True если успешно."""
-    data = load_characters_data()
-    categories = data.get("categories", {})
-    
-    if "custom" not in categories:
-        return False
-    
-    custom_chars = categories["custom"].get("characters", [])
-    
-    if character not in custom_chars:
-        return False
-    
-    custom_chars.remove(character)
-    categories["custom"]["characters"] = custom_chars
-    data["categories"] = categories
-    save_characters_data(data)
-    return True
+    with _char_lock:
+        data = load_characters_data()
+        categories = data.get("categories", {})
+
+        if "custom" not in categories:
+            return False
+
+        custom_chars = categories["custom"].get("characters", [])
+
+        if character not in custom_chars:
+            return False
+
+        custom_chars.remove(character)
+        categories["custom"]["characters"] = custom_chars
+        data["categories"] = categories
+        save_characters_data_nolock(data)
+        return True
 
 
 def get_custom_characters() -> list[str]:
@@ -120,17 +130,18 @@ def get_custom_characters() -> list[str]:
 
 def clear_custom_characters() -> None:
     """Очищает список кастомных персонажей."""
-    data = load_characters_data()
-    categories = data.get("categories", {})
-    if "custom" in categories:
-        categories["custom"]["characters"] = []
-        data["categories"] = categories
-        save_characters_data(data)
+    with _char_lock:
+        data = load_characters_data()
+        categories = data.get("categories", {})
+        if "custom" in categories:
+            categories["custom"]["characters"] = []
+            data["categories"] = categories
+            save_characters_data_nolock(data)
 
 
 def get_category_name(categories_list: list[str] | None = None) -> str:
     """Возвращает названия категорий через запятую."""
-    if not categories_list or "all" in categories_list:
+    if not categories_list or "*" in categories_list:
         return "🎲 Все категории"
     cats = get_categories()
     names = []

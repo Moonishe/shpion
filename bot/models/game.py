@@ -65,7 +65,7 @@ class GameSession:
     state: GameState = GameState.LOBBY
     players: list[Player] = field(default_factory=list)
     character: str = ""
-    categories: list[str] = field(default_factory=lambda: ["all"])
+    categories: list[str] = field(default_factory=lambda: ["*"])
     current_turn_index: int = 0
     spy_guess: Optional[str] = None
     winner: Optional[str] = None
@@ -89,34 +89,22 @@ class GameSession:
 
     def get_spy_count(self) -> int:
         if self.mode == GameMode.ONE_SPY:
+            self.spy_count = 1
             return 1
         if self.spy_count > 0:
             # Не больше, чем игроков - 1
             return min(self.spy_count, max(1, len(self.players) - 1))
         total = len(self.players)
         if total <= 6:
-            return 2
+            spy_count = 2
         elif total <= 9:
-            return 3
-        return max(4, total // 3)
+            spy_count = 3
+        else:
+            spy_count = max(4, total // 3)
+        return max(1, min(spy_count, total - 1))
 
     def is_full(self) -> bool:
-        return False  # безлимит
+        return len(self.players) >= 20
 
     def can_start(self) -> bool:
         return len(self.players) >= 2
-
-    def next_turn(self) -> Optional[Player]:
-        # Провокатор и путаник тоже описывают (они мирные)
-        describing_roles = (Role.CIVILIAN, Role.PROVOCATEUR, Role.CONFUSED)
-        for i in range(self.current_turn_index, len(self.players)):
-            p = self.players[i]
-            if not p.has_described and p.role in describing_roles:
-                self.current_turn_index = i + 1
-                return p
-        for i in range(len(self.players)):
-            p = self.players[i]
-            if not p.has_described and p.role in describing_roles:
-                self.current_turn_index = i + 1
-                return p
-        return None

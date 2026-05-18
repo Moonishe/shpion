@@ -86,6 +86,8 @@ async def init_db():
             ("sessions", "last_activity", "REAL NOT NULL DEFAULT 0"),
             ("sessions", "host_mode", "INTEGER NOT NULL DEFAULT 0"),
             ("sessions", "host_id", "INTEGER"),
+            ("stats", "spy_streak", "INTEGER NOT NULL DEFAULT 0"),
+            ("stats", "provocateur_streak", "INTEGER NOT NULL DEFAULT 0"),
         ]
         
         for table, column, col_type in migrations:
@@ -137,7 +139,7 @@ async def save_session(session):
                 session.settings_mode.value,
                 session.state.value,
                 session.character,
-                ",".join(session.categories) if session.categories else "all",
+                ",".join(session.categories) if session.categories else "*",
                 session.current_turn_index,
                 session.spy_guess,
                 session.winner,
@@ -197,8 +199,8 @@ async def load_session(chat_id: int):
             # Безопасное получение значений с дефолтами
             game_type_val = row["game_type"] if "game_type" in row.keys() else "classic"
             settings_mode_val = row["settings_mode"] if "settings_mode" in row.keys() else "manual"
-            raw_cat = row["category"] if "category" in row.keys() else "all"
-            category_list = raw_cat.split(",") if raw_cat else ["all"]
+            raw_cat = row["category"] if "category" in row.keys() else "*"
+            category_list = raw_cat.split(",") if raw_cat else ["*"]
             provocateur_val = row["provocateur_enabled"] if "provocateur_enabled" in row.keys() else 0
             confused_val = row["confused_enabled"] if "confused_enabled" in row.keys() else 0
             question_target = row["current_question_target"] if "current_question_target" in row.keys() else None
@@ -257,24 +259,38 @@ async def load_session(chat_id: int):
                     letter_sent=bool(letter_sent),
                 )
                 session.players.append(player)
+
+        async with db.execute(
+            "SELECT from_user_id, to_user_id, text FROM letters WHERE chat_id = ?", (chat_id,)
+        ) as cursor:
+            async for row in cursor:
+                for player in session.players:
+                    if player.user_id == row["to_user_id"]:
+                        player.received_letters[row["from_user_id"]] = row["text"]
+
         return session
 
 
 async def delete_session(chat_id: int):
     """Удаление сессии из БД."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM sessions WHERE chat_id = ?", (chat_id,))
+        await db.execute("DELETE FROM letters WHERE chat_id = ?", (chat_id,))
         await db.execute("DELETE FROM players WHERE chat_id = ?", (chat_id,))
+        await db.execute("DELETE FROM sessions WHERE chat_id = ?", (chat_id,))
         await db.commit()
 
 
 async def update_stats(user_id: int, won: bool, hint_used: bool = False, letter_sent: bool = False):
     """Обновляет статистику игрока."""
+    won_val = 1 if won else 0
+    lost_val = 0 if won else 1
+    hint_val = 1 if hint_used else 0
+    letter_val = 1 if letter_sent else 0
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO stats (user_id, games_played, games_won, games_lost, hints_used, letters_sent)
-            VALUES (?, 1, ?, 0, ?, ?)
+            VALUES (?, 1, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 games_played = games_played + 1,
                 games_won = games_won + ?,
@@ -282,9 +298,52 @@ async def update_stats(user_id: int, won: bool, hint_used: bool = False, letter_
                 hints_used = hints_used + ?,
                 letters_sent = letters_sent + ?
             """,
-            (user_id, 1 if won else 0, 1 if hint_used else 0, 1 if letter_sent else 0,
-             1 if won else 0, 0 if won else 1, 1 if hint_used else 0, 1 if letter_sent else 0),
+            (user_id, won_val, lost_val, hint_val, letter_val,
+             won_val, lost_val, hint_val, letter_val),
         )
+        await db.commit()
+
+
+async def get_streaks(user_ids: list[int]) -> dict[int, dict]:
+    """Возвращает spy_streak и provocateur_streak для списка игроков."""
+    if not user_ids:
+        return {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        placeholders = ",".join("?" * len(user_ids))
+        cursor = await db.execute(
+            f"SELECT user_id, spy_streak, provocateur_streak FROM stats WHERE user_id IN ({placeholders})",
+            tuple(user_ids),
+        )
+        rows = await cursor.fetchall()
+    return {row[0]: {"spy": row[1] or 0, "prov": row[2] or 0} for row in rows}
+
+
+async def update_streaks(spy_ids: list[int], prov_ids: list[int], all_ids: list[int]):
+    """Обновляет стрики: шпионы/провокаторы +1, остальные −1 (мин 0)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        for uid in all_ids:
+            await db.execute(
+                "INSERT INTO stats (user_id, games_played, games_won, games_lost, hints_used, letters_sent, spy_streak, provocateur_streak) "
+                "VALUES (?, 0, 0, 0, 0, 0, 0, 0) "
+                "ON CONFLICT(user_id) DO NOTHING",
+                (uid,),
+            )
+        for uid in spy_ids:
+            await db.execute(
+                "UPDATE stats SET spy_streak = spy_streak + 1, provocateur_streak = MAX(0, provocateur_streak - 1) WHERE user_id = ?",
+                (uid,),
+            )
+        for uid in prov_ids:
+            await db.execute(
+                "UPDATE stats SET provocateur_streak = provocateur_streak + 1, spy_streak = MAX(0, spy_streak - 1) WHERE user_id = ?",
+                (uid,),
+            )
+        other_ids = [uid for uid in all_ids if uid not in spy_ids and uid not in prov_ids]
+        for uid in other_ids:
+            await db.execute(
+                "UPDATE stats SET spy_streak = MAX(0, spy_streak - 1), provocateur_streak = MAX(0, provocateur_streak - 1) WHERE user_id = ?",
+                (uid,),
+            )
         await db.commit()
 
 
@@ -325,6 +384,14 @@ async def cleanup_stale_sessions(max_age: float = 7200):
     Сессии с created_at=0 (старые, до миграции) не трогает."""
     cutoff = time.time() - max_age
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM players WHERE chat_id IN (SELECT chat_id FROM sessions WHERE created_at > 0 AND created_at < ?)",
+            (cutoff,)
+        )
+        await db.execute(
+            "DELETE FROM letters WHERE chat_id IN (SELECT chat_id FROM sessions WHERE created_at > 0 AND created_at < ?)",
+            (cutoff,)
+        )
         await db.execute(
             "DELETE FROM sessions WHERE created_at > 0 AND created_at < ?",
             (cutoff,)
