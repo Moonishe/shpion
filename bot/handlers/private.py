@@ -1,4 +1,3 @@
-import asyncio
 import html
 import logging
 
@@ -9,10 +8,10 @@ from aiogram.filters import Command
 from bot.models.game import Role, GameType, GameState
 from bot.services import lobby_service
 from bot.services.game_service import (
-    check_victory, check_all_described, get_next_player,
-    check_rate_limit, update_session_activity, record_stats
+    check_victory, get_next_player,
+    check_rate_limit, record_stats
 )
-from bot.keyboards.inline import play_again_keyboard, i_said_keyboard, round_end_keyboard, host_confirm_keyboard
+from bot.keyboards.inline import play_again_keyboard, host_confirm_keyboard
 from bot.models.database import save_letter
 
 logger = logging.getLogger(__name__)
@@ -123,6 +122,7 @@ async def cmd_guess(message: Message, bot: Bot):
         # Отменяем таймер хода если был
         from bot.handlers.group import _cancel_turn_timer
         await _cancel_turn_timer(session.chat_id)
+        session.state = GameState.FINISHED
         await lobby_service.end_session(session.chat_id)
     elif result == "all_traitors_win":
         try:
@@ -140,6 +140,7 @@ async def cmd_guess(message: Message, bot: Bot):
         await message.answer("🎉 Ты угадал первым! Победа в режиме «Все предатели»!")
         from bot.handlers.group import _cancel_turn_timer
         await _cancel_turn_timer(session.chat_id)
+        session.state = GameState.FINISHED
         await lobby_service.end_session(session.chat_id)
     else:
         await message.answer(f"""
@@ -223,56 +224,12 @@ async def cb_i_said(callback: CallbackQuery, bot: Bot):
         await callback.answer("✅ Ты уже сказал.", show_alert=True)
         return
 
-    # Отмечаем, что игрок описал
-    current.has_described = True
-    session.current_turn_index += 1
-
     await callback.answer("✅ Принято!")
     await callback.message.edit_text("✅ Ты сказал. Жди остальных.")
-    update_session_activity(session)
 
-    await bot.send_message(chat_id, f"✅ <b>{html.escape(current.full_name)}</b> сказал!")
-
-    if check_all_described(session):
-        session.state = GameState.DISCUSSION
-        await lobby_service.persist_session(session)
-
-        await bot.send_message(chat_id,
-            f"🎉 <b>Раунд завершён!</b> Пауза 1 минута..."
-        )
-        await asyncio.sleep(60)
-
-        await bot.send_message(chat_id, """
-⏰ <b>Что дальше?</b>
-
-🗳️ Голосовать — выбрать шпиона
-▶️ Следующий раунд — ещё описания
-""".strip(), reply_markup=round_end_keyboard(chat_id))
-        return
-
-    next_player = get_next_player(session)
-    if next_player:
-        round_hint = "⚠️ Говори максимально обобщённо!" if session.description_round <= 2 else ""
-        await bot.send_message(chat_id,
-            f"🗣️ <b>{html.escape(next_player.full_name)}</b>, говори! 1 признак вслух."
-            + (f"\n{round_hint}" if round_hint else ""),
-            reply_markup=i_said_keyboard(chat_id),
-        )
-
-        try:
-            from bot.handlers.group import _get_role_hint
-            role_hint = _get_role_hint(next_player)
-            await bot.send_message(next_player.user_id,
-                f"🎯 <b>Твоя очередь!</b>"
-                + (f"\n\n{round_hint}" if round_hint else "")
-                + role_hint
-                + "\n\nСкажи вслух и жми кнопку.",
-                reply_markup=i_said_keyboard(chat_id),
-            )
-        except Exception as e:
-            logger.warning("Не удалось отправить кнопку Я-сказал (id=%d): %s", next_player.user_id, e)
-
-    await lobby_service.persist_session(session)
+    from bot.handlers.group import _do_i_said, _cancel_turn_timer
+    await _cancel_turn_timer(chat_id)
+    await _do_i_said(chat_id, user_id, bot, callback.message)
 
 
 @router.message(Command("mystats"))

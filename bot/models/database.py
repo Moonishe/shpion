@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS letters (
     text TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_letters_chat_id ON letters(chat_id);
 """
 
 
@@ -95,8 +97,11 @@ async def init_db():
             try:
                 await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 await db.commit()
-            except Exception:
-                pass  # Колонка уже существует
+            except Exception as e:
+                if 'duplicate column' in str(e).lower() or 'already exists' in str(e).lower():
+                    pass
+                else:
+                    raise
 
 
 async def save_session(session):
@@ -386,19 +391,19 @@ async def get_all_active_sessions() -> list[int]:
 
 async def cleanup_stale_sessions(max_age: float = 7200):
     """Удаляет сессии старше max_age секунд (по умолчанию 2 часа).
-    Сессии с created_at=0 (старые, до миграции) не трогает."""
+    Сессии с last_activity=0 (старые, до миграции) не трогает."""
     cutoff = time.time() - max_age
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "DELETE FROM players WHERE chat_id IN (SELECT chat_id FROM sessions WHERE created_at > 0 AND created_at < ?)",
+            "DELETE FROM players WHERE chat_id IN (SELECT chat_id FROM sessions WHERE last_activity > 0 AND last_activity < ?)",
             (cutoff,)
         )
         await db.execute(
-            "DELETE FROM letters WHERE chat_id IN (SELECT chat_id FROM sessions WHERE created_at > 0 AND created_at < ?)",
+            "DELETE FROM letters WHERE chat_id IN (SELECT chat_id FROM sessions WHERE last_activity > 0 AND last_activity < ?)",
             (cutoff,)
         )
         await db.execute(
-            "DELETE FROM sessions WHERE created_at > 0 AND created_at < ?",
+            "DELETE FROM sessions WHERE last_activity > 0 AND last_activity < ?",
             (cutoff,)
         )
         await db.commit()

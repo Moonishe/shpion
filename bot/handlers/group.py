@@ -976,6 +976,7 @@ async def cb_cancel(callback: CallbackQuery):
     await _cancel_turn_timer(chat_id)
     _reroll_votes.pop(chat_id, None)
     _cancel_votes.pop(chat_id, None)
+    session.state = GameState.FINISHED
     await lobby_service.end_session(chat_id)
     await callback.answer("🗑️ Отменено.")
     await callback.message.edit_text("🗑️ <b>Игра отменена.</b>\n\nНовая игра: /spy", reply_markup=play_again_keyboard())
@@ -995,6 +996,7 @@ async def cmd_stop(message: Message):
     await _cancel_turn_timer(chat_id)
     _reroll_votes.pop(chat_id, None)
     _cancel_votes.pop(chat_id, None)
+    session.state = GameState.FINISHED
     await lobby_service.end_session(chat_id)
     await message.answer("🛑 <b>Игра остановлена.</b>", reply_markup=play_again_keyboard())
 
@@ -1957,6 +1959,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
                 reply_markup=play_again_keyboard()
             )
             await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
             await lobby_service.end_session(chat_id)
             return
         await _reset_votes(session)
@@ -1982,6 +1985,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             else:
                 await bot.send_message(chat_id, "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.", reply_markup=play_again_keyboard())
                 await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
             await lobby_service.end_session(chat_id)
             return
 
@@ -2005,6 +2009,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             else:
                 await bot.send_message(chat_id, "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.", reply_markup=play_again_keyboard())
                 await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
             await lobby_service.end_session(chat_id)
             return
 
@@ -2045,6 +2050,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             reply_markup=play_again_keyboard()
         )
         await record_stats(session, civilians_won=True)
+        session.state = GameState.FINISHED
         await lobby_service.end_session(chat_id)
 
     elif outcome == "no_majority":
