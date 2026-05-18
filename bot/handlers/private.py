@@ -12,7 +12,7 @@ from bot.services.game_service import (
     check_rate_limit, record_stats
 )
 from bot.keyboards.inline import play_again_keyboard, host_confirm_keyboard
-from bot.models.database import save_letter
+from bot.models.database import save_letter, mark_user_started, load_started_users
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,11 @@ router = Router()
 router.message.filter(F.chat.type == "private")
 
 _started_users: set[int] = set()
+
+
+async def init_started_users():
+    global _started_users
+    _started_users = await load_started_users()
 
 
 def is_user_started(user_id: int) -> bool:
@@ -38,6 +43,7 @@ def get_unstarted(players) -> list[str]:
 async def cmd_start_private(message: Message):
     """Приветствие в ЛС."""
     _started_users.add(message.from_user.id)
+    await mark_user_started(message.from_user.id)
     await message.answer("""
 🎭 <b>ШПИОН</b> — бот для игры
 
@@ -431,4 +437,4 @@ async def cmd_setchar(message: Message):
 
 @router.message(Command("version"))
 async def cmd_version_private(message: Message):
-    await message.answer("🎭 <b>Шпион</b> v1.2\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
+    await message.answer("🎭 <b>Шпион</b> v1.2.1\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")

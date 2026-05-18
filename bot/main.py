@@ -72,6 +72,7 @@ def main():
     async def on_startup():
         await init_db()
         await set_bot_commands(bot)
+        await private.init_started_users()
         # Восстанавливаем активные сессии из БД
         try:
             active = await get_all_active_sessions()

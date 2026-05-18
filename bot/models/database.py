@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     description_round INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS started_users (
+    user_id INTEGER PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS players (
     chat_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -406,4 +410,19 @@ async def cleanup_stale_sessions(max_age: float = 7200):
             "DELETE FROM sessions WHERE last_activity > 0 AND last_activity < ?",
             (cutoff,)
         )
+
+
+async def mark_user_started(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO started_users (user_id) VALUES (?)",
+            (user_id,),
+        )
         await db.commit()
+
+
+async def load_started_users() -> set[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT user_id FROM started_users")
+        rows = await cursor.fetchall()
+    return {row[0] for row in rows}
