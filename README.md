@@ -1,5 +1,9 @@
 # 🎭 Шпион — Telegram Bot
 
+<p align="center">
+  <img src="icon.png" width="200" alt="Шпион">
+</p>
+
 Telegram-бот для групповой игры «Шпион» на **aiogram 3.x** + SQLite.
 
 ```
