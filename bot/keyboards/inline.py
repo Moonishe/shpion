@@ -193,7 +193,7 @@ def vote_keyboard(chat_id: int, players: list, votes: dict[int, int] = None) -> 
         cnt_text = f" ({cnt})" if cnt > 0 else ""
         buttons.append([
             InlineKeyboardButton(
-                text=f"🎯 {p.full_name}{cnt_text}",
+                text=f"🎯 {p.full_name}{' 👑' if p.is_creator else ''}{cnt_text}",
                 callback_data=f"vote_{chat_id}_{p.user_id}"
             )
         ])

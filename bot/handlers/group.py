@@ -92,7 +92,7 @@ HOWTO_TEXT = """
 
 def _lobby_text(session) -> str:
     """Формирует текст лобби."""
-    players_list = "\n".join([f"• {html.escape(p.full_name)}" for p in session.players])
+    players_list = "\n".join([f"• {html.escape(p.full_name)}{' 👑' if p.is_creator else ''}" for p in session.players])
     if not players_list:
         players_list = "— пока никого"
     
@@ -1816,7 +1816,7 @@ async def _start_vote(chat_id: int, bot: Bot, message):
     total = len(session.players)
     required = int(total * 0.75) + 1
     votes = count_votes(session)
-    vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)} — {votes.get(p.user_id, 0)}" for p in session.players])
+    vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)}{' 👑' if p.is_creator else ''} — {votes.get(p.user_id, 0)}" for p in session.players])
     waiting = _get_not_voted_names(session)
     await message.answer(
         f"🗳️ <b>ГОЛОСОВАНИЕ</b>\n\n{vote_lines}\n\nНужно >75% голосов ({required}/{total}) для раскрытия.\n{waiting}\n\nКто шпион? Жми на имя:",
@@ -1866,7 +1866,7 @@ async def cb_cancel_vote(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text("🗳️ <b>Голосование отменено.</b> Голоса сброшены.")
     else:
         votes = count_votes(session)
-        vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)} — {votes.get(p.user_id, 0)}" for p in session.players])
+        vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)}{' 👑' if p.is_creator else ''} — {votes.get(p.user_id, 0)}" for p in session.players])
         waiting = _get_not_voted_names(session)
         await callback.message.edit_text(
             f"🗳️ <b>Голосование</b>\n\n{vote_lines}\n\n"
@@ -1913,7 +1913,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
         voted = sum(1 for p in session.players if p.vote_for is not None)
         required = int(total * 0.75) + 1  # >75%
         votes = count_votes(session)
-        vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)} — {votes.get(p.user_id, 0)}" for p in session.players])
+        vote_lines = "\n".join([f"   🎯 {html.escape(p.full_name)}{' 👑' if p.is_creator else ''} — {votes.get(p.user_id, 0)}" for p in session.players])
         waiting = _get_not_voted_names(session)
         if voted < total:
             await callback.message.edit_text(
