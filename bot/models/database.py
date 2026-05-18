@@ -88,6 +88,7 @@ async def init_db():
             ("sessions", "host_id", "INTEGER"),
             ("stats", "spy_streak", "INTEGER NOT NULL DEFAULT 0"),
             ("stats", "provocateur_streak", "INTEGER NOT NULL DEFAULT 0"),
+            ("sessions", "split_character", "TEXT DEFAULT ''"),
         ]
         
         for table, column, col_type in migrations:
@@ -107,9 +108,9 @@ async def save_session(session):
                 chat_id, creator_id, mode, game_type, settings_mode, state, character, category,
                 current_turn_index, spy_guess, winner, spy_count,
                 provocateur_enabled, confused_enabled, current_question_target, questions_round,
-                description_round, created_at, last_activity, host_mode, host_id
+                description_round, created_at, last_activity, host_mode, host_id, split_character
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 creator_id=excluded.creator_id,
                 mode=excluded.mode,
@@ -129,7 +130,8 @@ async def save_session(session):
                 description_round=excluded.description_round,
                 last_activity=excluded.last_activity,
                 host_mode=excluded.host_mode,
-                host_id=excluded.host_id
+                host_id=excluded.host_id,
+                split_character=excluded.split_character
             """,
             (
                 session.chat_id,
@@ -153,6 +155,7 @@ async def save_session(session):
                 session.last_activity,
                 int(session.host_mode),
                 session.host_id,
+                session.split_character,
             ),
         )
         await db.execute("DELETE FROM players WHERE chat_id = ?", (session.chat_id,))
@@ -210,6 +213,7 @@ async def load_session(chat_id: int):
             last_activity = row["last_activity"] if "last_activity" in row.keys() else 0.0
             host_mode = row["host_mode"] if "host_mode" in row.keys() else 0
             host_id = row["host_id"] if "host_id" in row.keys() else None
+            split_character = row["split_character"] if "split_character" in row.keys() else ""
 
             
             session = GameSession(
@@ -234,6 +238,7 @@ async def load_session(chat_id: int):
                 last_activity=last_activity,
                 host_mode=bool(host_mode),
                 host_id=host_id,
+                split_character=split_character,
             )
             
         async with db.execute(

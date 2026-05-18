@@ -624,10 +624,18 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
 
     # Раздача ролей в ЛС
     failed = []
+    civ_counter = 0
     for p in session.players:
         try:
             if p.role == Role.CIVILIAN:
-                text = f"🎭 <b>МИРНЫЙ</b>\n\nТвой персонаж: <code>{html.escape(session.character)}</code>\n\nГовори 1 признак вслух. Имя не называй."
+                char = session.character
+                if session.split_character:
+                    if civ_counter % 2 == 0:
+                        char = session.character
+                    else:
+                        char = session.split_character
+                    civ_counter += 1
+                text = f"🎭 <b>МИРНЫЙ</b>\n\nТвой персонаж: <code>{html.escape(char)}</code>\n\nГовори 1 признак вслух. Имя не называй."
             elif p.role == Role.CONFUSED:
                 text = f"🎭 <b>ПУТАНИК</b>\n\nТвой персонаж: <code>{html.escape(p.alt_character)}</code>\n⚠️ Это НЕ настоящий персонаж!"
             elif p.role == Role.PROVOCATEUR:
@@ -726,6 +734,15 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
         await callback.answer("⏳ Игра уже началась.", show_alert=True)
         return
 
+    from bot.handlers.private import is_user_started, get_unstarted
+    unstarted = get_unstarted(session.players)
+    if unstarted:
+        await callback.answer(
+            f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и потом запускайте.",
+            show_alert=True,
+        )
+        return
+
     # Режим ведущего: только выбираем персонажа, ждём подтверждения
     if session.host_mode and session.host_id:
         session.character = _random.choice(characters)
@@ -795,13 +812,21 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
 
     # Раздача ролей в ЛС
     failed = []
+    civ_counter = 0
     for p in session.players:
         try:
             if p.role == Role.CIVILIAN:
+                char = session.character
+                if session.split_character:
+                    if civ_counter % 2 == 0:
+                        char = session.character
+                    else:
+                        char = session.split_character
+                    civ_counter += 1
                 text = f"""
 🎭 <b>МИРНЫЙ</b>
 
-Твой персонаж: <code>{html.escape(session.character)}</code>
+Твой персонаж: <code>{html.escape(char)}</code>
 
 Говори 1 признак вслух. Имя не называй.
 Обсуждение голосом, в чат не пиши!

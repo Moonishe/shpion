@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 router = Router()
 router.message.filter(F.chat.type == "private")
 
+_started_users: set[int] = set()
+
+
+def is_user_started(user_id: int) -> bool:
+    return user_id in _started_users
+
+
+def get_unstarted(players) -> list[str]:
+    return [p.full_name for p in players if p.user_id not in _started_users]
+
 
 # ═══════════════════════════════════════════════════════════════
 # 📱 ПРИВАТНЫЕ КОМАНДЫ
@@ -28,6 +38,7 @@ router.message.filter(F.chat.type == "private")
 @router.message(Command("start"))
 async def cmd_start_private(message: Message):
     """Приветствие в ЛС."""
+    _started_users.add(message.from_user.id)
     await message.answer("""
 🎭 <b>ШПИОН</b> — бот для игры
 

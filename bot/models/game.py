@@ -77,6 +77,7 @@ class GameSession:
     description_round: int = 0  # Раунд описаний (1-2 = обобщённые)
     host_mode: bool = False  # Режим ведущего
     host_id: Optional[int] = None  # ID ведущего
+    split_character: str = ""  # Второй персонаж для split-режима (5% шанс)
 
     created_at: float = 0.0  # timestamp создания
     last_activity: float = 0.0  # timestamp последней активности
