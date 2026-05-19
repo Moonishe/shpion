@@ -248,8 +248,9 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
             other_chars = [c for c in characters if c != session.character]
             alt_char = random.choice(other_chars) if other_chars else None
 
-    # 5% шанс split-режима: мирные получают случайные слова группами
-    if total > 5 and random.random() < 0.01:
+    # Split-режим: мирные получают случайные слова группами
+    if session.split_character == "split_pending":
+        session.split_character = ""
         session.split_words = []
         civ_ids = [p.user_id for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id and p.user_id != conf_id]
         random.shuffle(civ_ids)

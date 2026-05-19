@@ -718,9 +718,16 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
     if session.settings_mode == SettingsMode.RANDOM:
         randomize_settings(session)
 
-    # 10% шанс — случайный спецрежим (только в классике)
-    if _random.random() < 0.05:
-        session.game_type = _random.choice([GameType.NO_TRAITORS, GameType.ALL_TRAITORS])
+    # Адаптивный спецрежим: выбирается один из 4 (или ничего)
+    mode = _pick_special_mode(chat_id, len(session.players))
+    if mode == "no_traitors":
+        session.game_type = GameType.NO_TRAITORS
+    elif mode == "all_traitors":
+        session.game_type = GameType.ALL_TRAITORS
+    elif mode == "blind_spy":
+        session.game_type = GameType.BLIND_SPY
+    elif mode == "split":
+        session.split_character = "split_pending"  # метка для assign_roles
 
     # Проверяем, есть ли персонажи в выбранных категориях
     from bot.config import get_characters_by_category
@@ -1295,6 +1302,37 @@ _reroll_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted 
 _cancel_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to cancel
 _skip_pause: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to skip pause
 _coin_choices: dict[int, dict[int, str]] = {}  # chat_id -> {user_id: "heads"/"tails"}
+
+_mode_tracker: dict[int, dict[str, int]] = {}  # chat_id → {mode: games_since_last}
+
+_BASE_MODES = {
+    "no_traitors": 0.05,
+    "all_traitors": 0.05,
+    "blind_spy": 0.05,
+    "split": 0.01,
+}
+
+
+def _pick_special_mode(chat_id: int, total: int) -> str | None:
+    """Выбирает спецрежим с адаптивной вероятностью."""
+    tracker = _mode_tracker.setdefault(chat_id, {m: 0 for m in _BASE_MODES})
+    import random as _rr
+    r = _rr.random()
+    cum = 0.0
+    for mode, base in _BASE_MODES.items():
+        if mode == "split" and total <= 5:
+            continue
+        games = tracker.get(mode, 0)
+        chance = min(base * (2 ** games), 0.5)
+        cum += chance
+        if r < cum:
+            for m in _mode_tracker[chat_id]:
+                _mode_tracker[chat_id][m] = _mode_tracker[chat_id].get(m, 0) + 1
+            _mode_tracker[chat_id][mode] = 0
+            return mode
+    for m in _mode_tracker[chat_id]:
+        _mode_tracker[chat_id][m] = _mode_tracker[chat_id].get(m, 0) + 1
+    return None
 
 # Таймеры авто-пропуска хода
 _turn_timers: dict[int, asyncio.Task] = {}  # chat_id -> timer task
