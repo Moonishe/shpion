@@ -360,15 +360,12 @@ def process_vote_result(session: GameSession) -> dict | None:
 
     if most_voted is None:
         if voted == total and total == 2:
-            votes = count_votes(session)
-            candidates = [uid for uid, cnt in votes.items() if cnt == count]
-            if len(candidates) == 2:
-                spy_candidates = [uid for uid in candidates if session.get_player(uid) and session.get_player(uid).role == Role.SPY]
-                most_voted = spy_candidates[0] if spy_candidates else candidates[0]
-                if most_voted is None:
-                    return None
-            else:
-                return None
+            result = {
+                "outcome": "coin_flip",
+                "total": total,
+                "all_voted": True,
+            }
+            return result
         else:
             return None
 

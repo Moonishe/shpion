@@ -316,3 +316,15 @@ def skip_pause_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             )],
         ]
     )
+
+
+def coin_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Кнопки выбора орёл/решка."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🦅 Орёл", callback_data=f"coin_heads_{chat_id}"),
+                InlineKeyboardButton(text="🎲 Решка", callback_data=f"coin_tails_{chat_id}"),
+            ],
+        ]
+    )

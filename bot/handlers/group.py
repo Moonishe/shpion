@@ -1308,6 +1308,7 @@ async def cmd_clearchars(message: Message):
 _reroll_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted yes
 _cancel_votes: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to cancel
 _skip_pause: dict[int, set[int]] = {}  # chat_id -> set of user_ids who voted to skip pause
+_coin_choices: dict[int, dict[int, str]] = {}  # chat_id -> {user_id: "heads"/"tails"}
 
 # Таймеры авто-пропуска хода
 _turn_timers: dict[int, asyncio.Task] = {}  # chat_id -> timer task
@@ -1887,6 +1888,73 @@ async def cb_skip_pause(callback: CallbackQuery):
     await callback.answer(f"⏩ Принято ({len(votes)}/{skip_needed})")
 
 
+@router.callback_query(F.data.startswith("coin_"))
+async def cb_coin_choice(callback: CallbackQuery, bot: Bot):
+    import random as _rnd
+    parts = callback.data.split("_")
+    try:
+        choice = parts[1]  # "heads" or "tails"
+        chat_id = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка.", show_alert=True)
+        return
+    choices = _coin_choices.get(chat_id)
+    if choices is None:
+        await callback.answer("🪙 Монетка уже разыграна.", show_alert=True)
+        return
+    user_id = callback.from_user.id
+    session = lobby_service.get_session(chat_id)
+    if not session or not session.get_player(user_id):
+        await callback.answer("❌ Ты не в игре.", show_alert=True)
+        return
+    if user_id in choices:
+        await callback.answer("⚠️ Ты уже выбрал.", show_alert=True)
+        return
+    choice_name = "🦅 Орёл" if choice == "heads" else "🎲 Решка"
+    choices[user_id] = choice
+    await callback.answer(f"✅ Ты выбрал: {choice_name}")
+    await callback.message.edit_text(f"🪙 Ты выбрал: <b>{choice_name}</b>\nЖдём второго игрока...")
+
+    if len(choices) >= 2:
+        flip = _rnd.choice(["heads", "tails"])
+        flip_name = "🦅 Орёл" if flip == "heads" else "🎲 Решка"
+        players = session.players[:]
+        loser = None
+        winner = None
+        for p in players:
+            player_choice = choices.get(p.user_id)
+            if player_choice == flip:
+                winner = p
+            else:
+                loser = p
+        _coin_choices.pop(chat_id, None)
+        if loser:
+            session.players = [p for p in session.players if p.user_id != loser.user_id]
+            if loser.user_id == session.creator_id and session.players:
+                session.players[0].is_creator = True
+                session.creator_id = session.players[0].user_id
+        await bot.send_message(chat_id,
+            f"🪙 <b>МОНЕТКА!</b>\n\nВыпала: <b>{flip_name}</b>\n"
+            + (f"🚪 <b>{html.escape(loser.full_name)}</b> выбрал {choices.get(loser.user_id, '?')} — выбывает.\n" if loser else "")
+            + (f"✅ <b>{html.escape(winner.full_name)}</b> выбрал {choices.get(winner.user_id, '?')} — остаётся." if winner else "")
+        )
+        await _reset_votes(session)
+        if len(session.players) <= 1:
+            await bot.send_message(chat_id,
+                f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>",
+                reply_markup=play_again_keyboard()
+            )
+            await lobby_service.end_session(chat_id)
+            return
+        spies_team = sum(1 for p in session.players if p.role in (Role.SPY, Role.PROVOCATEUR))
+        civs_team = sum(1 for p in session.players if p.role in (Role.CIVILIAN, Role.CONFUSED))
+        actual_spies = sum(1 for p in session.players if p.role == Role.SPY)
+        if spies_team >= civs_team and actual_spies > 0:
+            await bot.send_message(chat_id, "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.", reply_markup=play_again_keyboard())
+            await record_stats(session, civilians_won=False)
+            await lobby_service.end_session(chat_id)
+
+
 @router.callback_query(F.data.startswith("cancel_vote_"))
 async def cb_cancel_vote(callback: CallbackQuery, bot: Bot):
     try:
@@ -1981,6 +2049,22 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
         return
 
     outcome = result["outcome"]
+
+    if outcome == "coin_flip":
+        from bot.keyboards.inline import coin_keyboard
+        await bot.send_message(chat_id, "🪙 <b>МОНЕТКА!</b>\n\n2 игрока, ничья. Судьбу решит монетка.\nКаждый выбирает орёл или решка в ЛС.")
+        players = session.players[:]
+        _coin_choices[chat_id] = {}
+        for p in players:
+            try:
+                await bot.send_message(p.user_id,
+                    "🪙 <b>Монетка!</b>\n\nВыбери сторону:",
+                    reply_markup=coin_keyboard(chat_id)
+                )
+            except Exception:
+                pass
+        return
+
     target_name = result["target"].full_name
 
     if session.game_type == GameType.ALL_TRAITORS:
