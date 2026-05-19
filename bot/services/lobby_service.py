@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from bot.models.game import GameMode, GameSession, Player
+from bot.models.game import GameMode, GameSession, GameState, Player
 from bot.models.database import save_session, load_session, delete_session
 
 
@@ -84,3 +84,14 @@ async def restore_session(chat_id: int) -> Optional[GameSession]:
 async def end_session(chat_id: int):
     _sessions.pop(chat_id, None)
     await delete_session(chat_id)
+
+
+async def cleanup_stale_lobbies(max_age: float = 180.0):
+    """Удаляет лобби-сессии, неактивные дольше max_age секунд."""
+    now = time.time()
+    to_delete = []
+    for chat_id, session in list(_sessions.items()):
+        if session.state == GameState.LOBBY and now - session.last_activity > max_age:
+            to_delete.append(chat_id)
+    for chat_id in to_delete:
+        await end_session(chat_id)

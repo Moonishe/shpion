@@ -88,7 +88,6 @@ def main():
             logger.warning("Не удалось загрузить активные сессии: %s", e)
 
     async def cleanup_loop():
-        """Фоновая задача: очистка старых сессий каждые 15 минут."""
         while True:
             await asyncio.sleep(900)
             try:
@@ -96,13 +95,24 @@ def main():
             except Exception as e:
                 logger.warning("Ошибка при очистке сессий: %s", e)
 
+    async def lobby_cleanup_loop():
+        from bot.services.lobby_service import cleanup_stale_lobbies
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await cleanup_stale_lobbies(max_age=180)
+            except Exception as e:
+                logger.warning("Ошибка при очистке лобби: %s", e)
+
     async def start():
         await on_startup()
         cleanup_task = asyncio.create_task(cleanup_loop())
+        lobby_task = asyncio.create_task(lobby_cleanup_loop())
         try:
             await dp.start_polling(bot)
         finally:
             cleanup_task.cancel()
+            lobby_task.cancel()
             await bot.session.close()
 
     try:
