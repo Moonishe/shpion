@@ -414,4 +414,4 @@ async def cmd_setchar(message: Message):
 
 @router.message(Command("version"))
 async def cmd_version_private(message: Message):
-    await message.answer("🎭 <b>Шпион</b> v1.3\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
+    await message.answer("🎭 <b>Шпион</b> v1.3.1\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
