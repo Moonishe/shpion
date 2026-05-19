@@ -198,44 +198,21 @@ async def cb_hint(callback: CallbackQuery):
     await callback.answer("💡 Подсказки приходят автоматически каждый раунд.", show_alert=True)
 
 
+
 # ═══════════════════════════════════════════════════════════════
-# ✅ "Я СКАЗАЛ" — переход хода (IRL описания)
+# 👤 ВЕДУЩИЙ: подтверждение персонажа / reroll (ЛС)
 # ═══════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data.startswith("i_said_"))
-async def cb_i_said(callback: CallbackQuery, bot: Bot):
-    """Игрок нажал 'Я сказал' — переход к следующему."""
-    if not check_rate_limit(callback.from_user.id, cooldown=1.0):
-        await callback.answer("⏳ Слишком быстро.", show_alert=True)
-        return
-    chat_id = int(callback.data.split("_")[2])
-    session = lobby_service.get_session(chat_id)
-    if not session or session.state != GameState.DESCRIBING:
-        await callback.answer("❌ Сейчас не фаза описаний.", show_alert=True)
-        return
+@router.callback_query(F.data.startswith("host_accept_"))
+async def cb_host_accept_private(callback: CallbackQuery, bot: Bot):
+    from bot.handlers.group import cb_host_accept
+    await cb_host_accept(callback, bot)
 
-    user_id = callback.from_user.id
-    player = session.get_player(user_id)
-    if not player:
-        await callback.answer("❌ Ты не в этой игре.", show_alert=True)
-        return
 
-    # Проверяем, что это действительно ход этого игрока
-    current = get_next_player(session)
-    if not current or current.user_id != user_id:
-        await callback.answer("⏳ Сейчас не твоя очередь.", show_alert=True)
-        return
-
-    if current.has_described:
-        await callback.answer("✅ Ты уже сказал.", show_alert=True)
-        return
-
-    await callback.answer("✅ Принято!")
-    await callback.message.edit_text("✅ Ты сказал. Жди остальных.")
-
-    from bot.handlers.group import _do_i_said, _cancel_turn_timer
-    await _cancel_turn_timer(chat_id)
-    await _do_i_said(chat_id, user_id, bot, callback.message)
+@router.callback_query(F.data.startswith("host_reroll_"))
+async def cb_host_reroll_private(callback: CallbackQuery, bot: Bot):
+    from bot.handlers.group import cb_host_reroll
+    await cb_host_reroll(callback, bot)
 
 
 @router.message(Command("mystats"))

@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from bot.models.game import GameMode, GameSession, GameState, Player
+from bot.models.game import GameMode, GameSession, Player
 from bot.models.database import save_session, load_session, delete_session
 
 

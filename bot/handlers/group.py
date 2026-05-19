@@ -585,6 +585,14 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
     await callback.answer("✅ Погнали!")
     await callback.message.edit_text("✅ Персонаж утверждён! Игра начинается.")
 
+    from bot.handlers.private import get_unstarted
+    unstarted = get_unstarted(session.players)
+    if unstarted:
+        await bot.send_message(chat_id,
+            f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и перезапустите игру."
+        )
+        return
+
     # Раздаём роли и запускаем
     try:
         await lobby_service.start_game(session)
@@ -621,14 +629,6 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
 
 📩 Роли ушли в личку. Не пришло? Напиши /start боту в ЛС.
 """.strip())
-
-    from bot.handlers.private import get_unstarted
-    unstarted = get_unstarted(session.players)
-    if unstarted:
-        await bot.send_message(chat_id,
-            f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и перезапустите игру."
-        )
-        return
 
     # Раздача ролей в ЛС
     failed = []
@@ -758,6 +758,9 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
         session.players = [p for p in session.players if p.user_id != session.host_id]
         if not session.players:
             await callback.answer("❌ Нет игроков кроме ведущего.", show_alert=True)
+            return
+        if len(session.players) < 2:
+            await callback.answer("❌ Недостаточно игроков для игры.", show_alert=True)
             return
         session.state = GameState.LOBBY
         await callback.answer()
@@ -1333,7 +1336,7 @@ async def _start_turn_timer(chat_id: int, session, bot: Bot, message, timeout: i
                     f"⏰ <b>{html.escape(current.full_name)}</b> не ответил — пропускаем ход."
                 )
                 # Эмулируем нажатие «Я сказал»
-                await _do_i_said(chat_id, current.user_id, bot, message)
+                await _do_i_said(chat_id, current.user_id, bot)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1344,7 +1347,7 @@ async def _start_turn_timer(chat_id: int, session, bot: Bot, message, timeout: i
     _turn_timers[chat_id] = asyncio.create_task(_auto_skip())
 
 
-async def _do_i_said(chat_id: int, user_id: int, bot: Bot, message):
+async def _do_i_said(chat_id: int, user_id: int, bot: Bot):
     """Обрабатывает завершение хода игрока (нажал или авто-пропуск)."""
     from bot.keyboards.inline import i_said_keyboard
 
@@ -1687,7 +1690,7 @@ async def cb_i_said_group(callback: CallbackQuery, bot: Bot):
 
     await _cancel_turn_timer(chat_id)
     await callback.answer("✅ Принято!")
-    await _do_i_said(chat_id, user_id, bot, callback.message)
+    await _do_i_said(chat_id, user_id, bot)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1843,6 +1846,7 @@ async def _start_vote(chat_id: int, bot: Bot, message):
 
     _reroll_votes.pop(chat_id, None)
     session.state = GameState.VOTING
+    await lobby_service.persist_session(session)
     _cancel_votes.pop(chat_id, None)
     update_session_activity(session)
     total = len(session.players)
@@ -2035,6 +2039,15 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             session.state = GameState.FINISHED
             await lobby_service.end_session(chat_id)
             return
+        if len(session.players) <= 1:
+            if session.game_type == GameType.NO_TRAITORS:
+                await bot.send_message(chat_id, "👤 Игра окончена. Шпионов не было.", reply_markup=play_again_keyboard())
+            else:
+                await bot.send_message(chat_id, f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>", reply_markup=play_again_keyboard())
+                await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
+            await lobby_service.end_session(chat_id)
+            return
 
     elif outcome == "provocateur_caught":
         target_player = result["target"]
@@ -2055,6 +2068,15 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
                 await bot.send_message(chat_id, "👤 Игра окончена. Шпионов не было.", reply_markup=play_again_keyboard())
             else:
                 await bot.send_message(chat_id, "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.", reply_markup=play_again_keyboard())
+                await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
+            await lobby_service.end_session(chat_id)
+            return
+        if len(session.players) <= 1:
+            if session.game_type == GameType.NO_TRAITORS:
+                await bot.send_message(chat_id, "👤 Игра окончена. Шпионов не было.", reply_markup=play_again_keyboard())
+            else:
+                await bot.send_message(chat_id, f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>", reply_markup=play_again_keyboard())
                 await record_stats(session, civilians_won=False)
             session.state = GameState.FINISHED
             await lobby_service.end_session(chat_id)
@@ -2091,6 +2113,24 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
             f"🕵️ <b>ШПИОН ПОЙМАН!</b>\n\n<b>{html.escape(target_name)}</b> — шпион. Но остал{'ся' if remaining == 1 else 'ось'} ещё {remaining}!\nГолоса сброшены. Продолжайте."
         )
         await _reset_votes(session)
+        spies_team = sum(1 for p in session.players if p.role in (Role.SPY, Role.PROVOCATEUR))
+        civs_team = sum(1 for p in session.players if p.role in (Role.CIVILIAN, Role.CONFUSED))
+        actual_spies = sum(1 for p in session.players if p.role == Role.SPY)
+        if spies_team >= civs_team and actual_spies > 0:
+            await bot.send_message(chat_id, "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.", reply_markup=play_again_keyboard())
+            await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
+            await lobby_service.end_session(chat_id)
+            return
+        if len(session.players) <= 1:
+            if session.game_type == GameType.NO_TRAITORS:
+                await bot.send_message(chat_id, "👤 Игра окончена. Шпионов не было.", reply_markup=play_again_keyboard())
+            else:
+                await bot.send_message(chat_id, f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>", reply_markup=play_again_keyboard())
+                await record_stats(session, civilians_won=False)
+            session.state = GameState.FINISHED
+            await lobby_service.end_session(chat_id)
+            return
 
     elif outcome == "civilians":
         await _cancel_turn_timer(chat_id)

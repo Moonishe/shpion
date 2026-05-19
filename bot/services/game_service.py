@@ -150,6 +150,8 @@ def randomize_settings(session: GameSession) -> None:
 
 
 def _weighted_choice_idx(weights: list[float]) -> int:
+    if len(weights) == 0:
+        return 0
     total = sum(weights)
     if total <= 0:
         return random.randrange(len(weights))
@@ -176,12 +178,16 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
     if session.game_type == GameType.NO_TRAITORS:
         for p in session.players:
             p.role = Role.CIVILIAN
+        session.spy_count = 0
+        session.mode = GameMode.ONE_SPY
         session.state = GameState.ROLE_DISTRIBUTION
         return
 
     if session.game_type == GameType.ALL_TRAITORS:
         for p in session.players:
             p.role = Role.SPY
+        session.spy_count = len(session.players)
+        session.mode = GameMode.MULTI_SPY
         session.state = GameState.ROLE_DISTRIBUTION
         return
 
@@ -196,7 +202,11 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
         session.spy_count = 1
         session.mode = GameMode.ONE_SPY
         session.state = GameState.ROLE_DISTRIBUTION
+        from bot.models.database import update_streaks
+        await update_streaks([spy_target.user_id], [], [p.user_id for p in session.players])
         return
+
+    session.confused_enabled = False
 
     from bot.models.database import get_streaks, update_streaks
     streaks = await get_streaks([p.user_id for p in session.players])
@@ -397,8 +407,6 @@ def process_vote_result(session: GameSession) -> dict | None:
             result["remaining_spies"] = remaining
         else:
             result["outcome"] = "civilians"
-    elif voted == total:
-        result["outcome"] = "no_majority"
     else:
         return None
 
