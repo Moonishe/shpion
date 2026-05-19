@@ -652,9 +652,10 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
                 text = f"🎭 <b>МИРНЫЙ</b>\n\nТвой персонаж: <code>{html.escape(p.fake_character)}</code>\n\nГовори 1 признак вслух. Имя не называй."
             else:
                 text = "🎭 <b>ШПИОН</b>\n\nТы не знаешь персонажа. Слушай других.\n/hint — подсказка (1 раз)\n/guess Имя — угадать!"
+            await asyncio.sleep(0.05)
             await bot.send_message(p.user_id, text)
         except Exception as e:
-            logger.warning("Не удалось отправить роль %d: %s", p.user_id, e)
+            logger.warning("Не удалось отправить роль %s (id=%d): %s", p.full_name, p.user_id, e)
             failed.append(html.escape(p.full_name))
 
     if failed:
@@ -886,6 +887,7 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
 /hint — подсказка (1 раз)
 /guess Имя — угадать и победить!
 """.strip()
+            await asyncio.sleep(0.05)
             await bot.send_message(p.user_id, text)
         except Exception as e:
             logger.warning("Не удалось отправить роль %s (id=%d): %s", p.full_name, p.user_id, e)
@@ -1467,6 +1469,7 @@ async def _reroll_character(session, bot: Bot, chat_id: int):
 
     # Обновляем роли с новым персонажем и шлём ЛС
     for p in session.players:
+        await asyncio.sleep(0.05)
         if p.role == Role.CIVILIAN:
             try:
                 await bot.send_message(
@@ -2060,6 +2063,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
         import random as _rnd
         spies = [p for p in session.players if p.role == Role.SPY]
         for spy in spies:
+            await asyncio.sleep(0.05)
             hint_type = _rnd.choice(HINT_TYPES)
             hint_text = get_hint_for_spy(session, hint_type)
             try:
@@ -2071,6 +2075,7 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
         civs = [p for p in session.players if p.role != Role.SPY]
         for p in civs:
             try:
+                await asyncio.sleep(0.05)
                 await bot.send_message(p.user_id, "🔔 Шпионы получили подсказку.")
             except Exception:
                 pass

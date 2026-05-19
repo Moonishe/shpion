@@ -1,6 +1,7 @@
 import html
 import time
 import re
+import asyncio
 import logging
 import random
 
@@ -308,6 +309,7 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
         hints = [get_hint_for_spy(session, t) for t in spy_types]
         hint_text = "\n".join(hints)
         try:
+            await asyncio.sleep(0.05)
             await bot.send_message(spy.user_id,
                 f"💡 <b>Раунд {round_num} — подсказка ({hint_count} шт.)</b>\n\n{hint_text}"
             )
@@ -317,6 +319,7 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
     civilians = [p for p in session.players if p.role != Role.SPY]
     for p in civilians:
         try:
+            await asyncio.sleep(0.05)
             await bot.send_message(p.user_id, "🔔 Шпионы получили подсказку.")
         except Exception:
             pass
