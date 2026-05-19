@@ -213,16 +213,6 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
 
     total = len(session.players)
     players = session.players[:]
-
-    # 5% шанс split-режима: мирные получают случайные слова из пула
-    if total > 5 and random.random() < 0.05:
-        session.split_words = []
-        for p in players:
-            if p.user_id not in spy_ids_set and p.user_id != prov_id and p.user_id != conf_id:
-                p.split_character = random.choice(characters)
-                session.split_words.append(p.split_character)
-    else:
-        session.split_words = []
     ids = [p.user_id for p in players]
 
     # Веса для шпионов: 1 / 2^streak
@@ -257,6 +247,26 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
             conf_id = random.choice(conf_candidates).user_id
             other_chars = [c for c in characters if c != session.character]
             alt_char = random.choice(other_chars) if other_chars else None
+
+    # 5% шанс split-режима: мирные получают случайные слова группами
+    if total > 5 and random.random() < 0.05:
+        session.split_words = []
+        civ_ids = [p.user_id for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id and p.user_id != conf_id]
+        random.shuffle(civ_ids)
+        i = 0
+        while i < len(civ_ids):
+            size = random.choices([1, 2, 3], weights=[0.4, 0.4, 0.2], k=1)[0]
+            size = min(size, len(civ_ids) - i)
+            word = random.choice(characters)
+            session.split_words.append(word)
+            for j in range(size):
+                for p in players:
+                    if p.user_id == civ_ids[i + j]:
+                        p.split_character = word
+                        break
+            i += size
+    else:
+        session.split_words = []
 
     # Раздаём роли
     for p in session.players:
