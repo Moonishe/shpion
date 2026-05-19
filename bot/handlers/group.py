@@ -2235,4 +2235,4 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
 
 @router.message(Command("version"))
 async def cmd_version_group(message: Message):
-    await message.answer("🎭 <b>Шпион</b> v1.3.1\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
+    await message.answer("🎭 <b>Шпион</b> v1.3.2\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
