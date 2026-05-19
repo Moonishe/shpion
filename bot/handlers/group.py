@@ -622,6 +622,14 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
 📩 Роли ушли в личку. Не пришло? Напиши /start боту в ЛС.
 """.strip())
 
+    from bot.handlers.private import get_unstarted
+    unstarted = get_unstarted(session.players)
+    if unstarted:
+        await bot.send_message(chat_id,
+            f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и перезапустите игру."
+        )
+        return
+
     # Раздача ролей в ЛС
     failed = []
     civ_counter = 0
