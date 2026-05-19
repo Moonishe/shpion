@@ -214,13 +214,15 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
     total = len(session.players)
     players = session.players[:]
 
-    # 5% шанс split-режима: мирные получают разные слова
+    # 5% шанс split-режима: мирные получают случайные слова из пула
     if total > 5 and random.random() < 0.05:
-        other_chars = [c for c in characters if c != session.character]
-        if other_chars:
-            session.split_character = random.choice(other_chars)
+        session.split_words = []
+        for p in players:
+            if p.user_id not in spy_ids_set and p.user_id != prov_id and p.user_id != conf_id:
+                p.split_character = random.choice(characters)
+                session.split_words.append(p.split_character)
     else:
-        session.split_character = ""
+        session.split_words = []
     ids = [p.user_id for p in players]
 
     # Веса для шпионов: 1 / 2^streak
@@ -492,9 +494,10 @@ def check_victory(session: GameSession) -> str | None:
             if session.game_type == GameType.ALL_TRAITORS:
                 return "all_traitors_win"
             return "spy_guess"
-        if session.split_character and guess_matches(session.spy_guess, session.split_character):
-            if session.game_type == GameType.ALL_TRAITORS:
-                return "all_traitors_win"
-            return "spy_guess"
+        for w in session.split_words:
+            if guess_matches(session.spy_guess, w):
+                if session.game_type == GameType.ALL_TRAITORS:
+                    return "all_traitors_win"
+                return "spy_guess"
 
     return None

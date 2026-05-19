@@ -88,6 +88,7 @@ async def init_db():
             ("players", "alt_character", "TEXT DEFAULT ''"),
             ("players", "hint_used", "INTEGER NOT NULL DEFAULT 0"),
             ("players", "letter_sent", "INTEGER NOT NULL DEFAULT 0"),
+            ("players", "split_character", "TEXT DEFAULT ''"),
             ("sessions", "created_at", "REAL NOT NULL DEFAULT 0"),
             ("sessions", "last_activity", "REAL NOT NULL DEFAULT 0"),
             ("sessions", "host_mode", "INTEGER NOT NULL DEFAULT 0"),
@@ -95,6 +96,7 @@ async def init_db():
             ("stats", "spy_streak", "INTEGER NOT NULL DEFAULT 0"),
             ("stats", "provocateur_streak", "INTEGER NOT NULL DEFAULT 0"),
             ("sessions", "split_character", "TEXT DEFAULT ''"),
+            ("sessions", "split_words", "TEXT DEFAULT ''"),
         ]
         
         for table, column, col_type in migrations:
@@ -117,9 +119,9 @@ async def save_session(session):
                 chat_id, creator_id, mode, game_type, settings_mode, state, character, category,
                 current_turn_index, spy_guess, winner, spy_count,
                 provocateur_enabled, confused_enabled, current_question_target, questions_round,
-                description_round, created_at, last_activity, host_mode, host_id, split_character
+                description_round, created_at, last_activity, host_mode, host_id, split_character, split_words
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 creator_id=excluded.creator_id,
                 mode=excluded.mode,
@@ -140,7 +142,8 @@ async def save_session(session):
                 last_activity=excluded.last_activity,
                 host_mode=excluded.host_mode,
                 host_id=excluded.host_id,
-                split_character=excluded.split_character
+                split_character=excluded.split_character,
+                split_words=excluded.split_words
             """,
             (
                 session.chat_id,
@@ -165,6 +168,7 @@ async def save_session(session):
                 int(session.host_mode),
                 session.host_id,
                 session.split_character,
+                ",".join(session.split_words) if session.split_words else "",
             ),
         )
         await db.execute("DELETE FROM players WHERE chat_id = ?", (session.chat_id,))
@@ -173,9 +177,9 @@ async def save_session(session):
                 """
                 INSERT INTO players (
                     chat_id, user_id, username, full_name, role,
-                    is_creator, has_described, vote_for, fake_character, alt_character, hint_used, letter_sent
+                    is_creator, has_described, vote_for, fake_character, alt_character, hint_used, letter_sent, split_character
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.chat_id,
@@ -190,6 +194,7 @@ async def save_session(session):
                     p.alt_character,
                     int(p.hint_used),
                     int(p.letter_sent),
+                    p.split_character,
                 ),
             )
         await db.commit()
@@ -223,6 +228,8 @@ async def load_session(chat_id: int):
             host_mode = row["host_mode"] if "host_mode" in row.keys() else 0
             host_id = row["host_id"] if "host_id" in row.keys() else None
             split_character = row["split_character"] if "split_character" in row.keys() else ""
+            split_words_raw = row["split_words"] if "split_words" in row.keys() else ""
+            split_words = [w for w in split_words_raw.split(",") if w] if split_words_raw else []
 
             
             session = GameSession(
@@ -248,6 +255,7 @@ async def load_session(chat_id: int):
                 host_mode=bool(host_mode),
                 host_id=host_id,
                 split_character=split_character,
+                split_words=split_words,
             )
             
         async with db.execute(
@@ -258,6 +266,7 @@ async def load_session(chat_id: int):
                 alt_char = row["alt_character"] if "alt_character" in row.keys() else ""
                 hint_used = row["hint_used"] if "hint_used" in row.keys() else 0
                 letter_sent = row["letter_sent"] if "letter_sent" in row.keys() else 0
+                split_char = row["split_character"] if "split_character" in row.keys() else ""
 
                 player = Player(
                     user_id=row["user_id"],
@@ -269,6 +278,7 @@ async def load_session(chat_id: int):
                     vote_for=row["vote_for"],
                     fake_character=fake_char or "",
                     alt_character=alt_char or "",
+                    split_character=split_char or "",
                     hint_used=bool(hint_used),
                     letter_sent=bool(letter_sent),
                 )

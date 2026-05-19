@@ -632,17 +632,10 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
 
     # Раздача ролей в ЛС
     failed = []
-    civ_counter = 0
     for p in session.players:
         try:
             if p.role == Role.CIVILIAN:
-                char = session.character
-                if session.split_character:
-                    if civ_counter % 2 == 0:
-                        char = session.character
-                    else:
-                        char = session.split_character
-                    civ_counter += 1
+                char = p.split_character or session.character
                 text = f"🎭 <b>МИРНЫЙ</b>\n\nТвой персонаж: <code>{html.escape(char)}</code>\n\nГовори 1 признак вслух. Имя не называй."
             elif p.role == Role.CONFUSED:
                 text = f"🎭 <b>ПУТАНИК</b>\n\nТвой персонаж: <code>{html.escape(p.alt_character)}</code>\n⚠️ Это НЕ настоящий персонаж!"
@@ -824,17 +817,10 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
 
     # Раздача ролей в ЛС
     failed = []
-    civ_counter = 0
     for p in session.players:
         try:
             if p.role == Role.CIVILIAN:
-                char = session.character
-                if session.split_character:
-                    if civ_counter % 2 == 0:
-                        char = session.character
-                    else:
-                        char = session.split_character
-                    civ_counter += 1
+                char = p.split_character or session.character
                 text = f"""
 🎭 <b>МИРНЫЙ</b>
 

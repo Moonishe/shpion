@@ -49,6 +49,7 @@ class Player:
     vote_for: Optional[int] = None
     fake_character: str = ""  # Для провокатора
     alt_character: str = ""   # Для путаника (другой персонаж из категории)
+    split_character: str = ""  # Для split-режима — свой персонаж
     hint_used: bool = False   # Использовал ли шпион подсказку
     letter_sent: bool = False  # Отправил ли письмо
     received_letters: dict[int, str] = field(default_factory=dict)
@@ -77,6 +78,7 @@ class GameSession:
     host_mode: bool = False  # Режим ведущего
     host_id: Optional[int] = None  # ID ведущего
     split_character: str = ""  # Второй персонаж для split-режима (5% шанс)
+    split_words: list[str] = field(default_factory=list)  # Все розданные слова в split-режиме
 
     created_at: float = 0.0  # timestamp создания
     last_activity: float = 0.0  # timestamp последней активности
