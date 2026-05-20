@@ -12,25 +12,79 @@ logger = logging.getLogger(__name__)
 
 # Маппинг чисел: русские слова, английские, транслит → цифры
 _NUM_MAP = {
-    'ноль': '0', 'один': '1', 'два': '2', 'три': '3', 'четыре': '4',
-    'пять': '5', 'шесть': '6', 'семь': '7', 'восемь': '8', 'девять': '9',
-    'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
-    'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
-    'сикс': '6', 'севен': '7', 'найн': '9', 'ту': '2', 'фри': '3',
-    'фор': '4', 'файв': '5', 'эйт': '8',
+    "ноль": "0",
+    "один": "1",
+    "два": "2",
+    "три": "3",
+    "четыре": "4",
+    "пять": "5",
+    "шесть": "6",
+    "семь": "7",
+    "восемь": "8",
+    "девять": "9",
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "сикс": "6",
+    "севен": "7",
+    "найн": "9",
+    "ту": "2",
+    "фри": "3",
+    "фор": "4",
+    "файв": "5",
+    "эйт": "8",
 }
 
 # Транслит → кириллица
 _TRANS_MAP = {
-    'sh': 'ш', 'ch': 'ч', 'sch': 'щ', 'zh': 'ж', 'ts': 'ц',
-    'yu': 'ю', 'ya': 'я', 'yo': 'ё', 'kh': 'х', 'th': 'т',
-    'ph': 'ф', 'ee': 'и', 'oo': 'у', 'ai': 'ай', 'ei': 'ей',
-    'a': 'а', 'b': 'б', 'v': 'в', 'g': 'г', 'd': 'д',
-    'e': 'е', 'z': 'з', 'i': 'и', 'j': 'й', 'k': 'к',
-    'l': 'л', 'm': 'м', 'n': 'н', 'o': 'о', 'p': 'п',
-    'r': 'р', 's': 'с', 't': 'т', 'u': 'у', 'f': 'ф',
-    'h': 'х', 'c': 'к', 'y': 'ы', 'x': 'кс', 'w': 'в',
-    'q': 'к',
+    "sh": "ш",
+    "ch": "ч",
+    "sch": "щ",
+    "zh": "ж",
+    "ts": "ц",
+    "yu": "ю",
+    "ya": "я",
+    "yo": "ё",
+    "kh": "х",
+    "th": "т",
+    "ph": "ф",
+    "ee": "и",
+    "oo": "у",
+    "ai": "ай",
+    "ei": "ей",
+    "a": "а",
+    "b": "б",
+    "v": "в",
+    "g": "г",
+    "d": "д",
+    "e": "е",
+    "z": "з",
+    "i": "и",
+    "j": "й",
+    "k": "к",
+    "l": "л",
+    "m": "м",
+    "n": "н",
+    "o": "о",
+    "p": "п",
+    "r": "р",
+    "s": "с",
+    "t": "т",
+    "u": "у",
+    "f": "ф",
+    "h": "х",
+    "c": "к",
+    "y": "ы",
+    "x": "кс",
+    "w": "в",
+    "q": "к",
 }
 
 
@@ -38,9 +92,9 @@ def normalize_for_comparison(s: str) -> str:
     """Нормализует строку для сравнения: цифры↔слова, транслит, регистр, е/ё."""
     s = s.lower().strip()
     # е ↔ ё
-    s = s.replace('ё', 'е')
+    s = s.replace("ё", "е")
     # Убираем пробелы и пунктуацию
-    s = re.sub(r'[^a-zа-яё0-9]', '', s)
+    s = re.sub(r"[^a-zа-яё0-9]", "", s)
     # Числа словами → цифры (должны быть до транслита)
     for word, digit in sorted(_NUM_MAP.items(), key=lambda x: -len(x[0])):
         s = s.replace(word, digit)
@@ -75,6 +129,7 @@ def guess_matches(guess: str, character: str) -> bool:
     threshold = max(1, int(len(c) * 0.45))
     return dist <= threshold
 
+
 # Рейт-лимит: {user_id: last_command_time}
 _rate_limit: dict[int, float] = {}
 _last_rate_limit_cleanup: float = 0.0
@@ -102,6 +157,7 @@ def clear_rate_limit(user_id: int):
 async def record_stats(session, civilians_won: bool = True, spy_guess: bool = False):
     """Записывает статистику для всех игроков после окончания игры."""
     from bot.models.database import update_stats
+
     for p in session.players:
         if p.role == Role.SPY or p.role == Role.PROVOCATEUR:
             won = spy_guess or not civilians_won
@@ -122,10 +178,14 @@ def randomize_settings(session: GameSession) -> None:
     """Рандомизирует настройки игры."""
     # Рандомные категории
     all_cats = list(get_categories().keys())
-    session.categories = random.sample(all_cats, k=random.randint(1, min(3, len(all_cats))))
+    session.categories = random.sample(
+        all_cats, k=random.randint(1, min(3, len(all_cats)))
+    )
 
     # Рандомный тип игры
-    session.game_type = random.choice([GameType.CLASSIC, GameType.QUESTIONS, GameType.BLIND_SPY])
+    session.game_type = random.choice(
+        [GameType.CLASSIC, GameType.QUESTIONS, GameType.BLIND_SPY]
+    )
 
     # Рандомное количество шпионов (зависит от числа игроков)
     num_players = len(session.players)
@@ -134,16 +194,23 @@ def randomize_settings(session: GameSession) -> None:
         session.mode = GameMode.ONE_SPY
     elif num_players <= 6:
         session.spy_count = random.choice([1, 2])
-        session.mode = GameMode.ONE_SPY if session.spy_count == 1 else GameMode.MULTI_SPY
+        session.mode = (
+            GameMode.ONE_SPY if session.spy_count == 1 else GameMode.MULTI_SPY
+        )
     elif num_players <= 9:
         session.spy_count = random.choice([1, 2, 3])
-        session.mode = GameMode.ONE_SPY if session.spy_count == 1 else GameMode.MULTI_SPY
+        session.mode = (
+            GameMode.ONE_SPY if session.spy_count == 1 else GameMode.MULTI_SPY
+        )
     else:
         session.spy_count = random.choice([2, 3, 4])
         session.mode = GameMode.MULTI_SPY
 
     # Рандомный провокатор (только если 4+ игроков и не в специальных режимах)
-    if num_players >= 4 and session.game_type not in (GameType.NO_TRAITORS, GameType.ALL_TRAITORS):
+    if num_players >= 4 and session.game_type not in (
+        GameType.NO_TRAITORS,
+        GameType.ALL_TRAITORS,
+    ):
         session.provocateur_enabled = random.choice([True, False])
     else:
         session.provocateur_enabled = False
@@ -203,12 +270,16 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
         session.mode = GameMode.ONE_SPY
         session.state = GameState.ROLE_DISTRIBUTION
         from bot.models.database import update_streaks
-        await update_streaks([spy_target.user_id], [], [p.user_id for p in session.players])
+
+        await update_streaks(
+            [spy_target.user_id], [], [p.user_id for p in session.players]
+        )
         return
 
     session.confused_enabled = False
 
     from bot.models.database import get_streaks, update_streaks
+
     streaks = await get_streaks([p.user_id for p in session.players])
 
     total = len(session.players)
@@ -231,7 +302,10 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
     prov_id = None
     if session.provocateur_enabled and total >= 4 and len(spy_ids_set) < total:
         prov_candidates = [p for p in players if p.user_id not in spy_ids_set]
-        prov_weights = [1.0 / (2 ** streaks.get(p.user_id, {}).get("prov", 0)) for p in prov_candidates]
+        prov_weights = [
+            1.0 / (2 ** streaks.get(p.user_id, {}).get("prov", 0))
+            for p in prov_candidates
+        ]
         if prov_candidates:
             idx = _weighted_choice_idx(prov_weights)
             prov_id = prov_candidates[idx].user_id
@@ -239,7 +313,9 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
     # Путаник
     conf_id = None
     alt_char = None
-    conf_candidates = [p for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id]
+    conf_candidates = [
+        p for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id
+    ]
     if total >= 7 and conf_candidates and len(characters) >= 2:
         chance = 0.25 if total <= 9 else (0.5 if total == 10 else 0.75)
         if random.random() < chance:
@@ -252,13 +328,26 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
     if session.split_character == "split_pending":
         session.split_character = ""
         session.split_words = []
-        civ_ids = [p.user_id for p in players if p.user_id not in spy_ids_set and p.user_id != prov_id and p.user_id != conf_id]
+        civ_ids = [
+            p.user_id
+            for p in players
+            if p.user_id not in spy_ids_set
+            and p.user_id != prov_id
+            and p.user_id != conf_id
+        ]
         random.shuffle(civ_ids)
+        # Пул слов для split: исключаем основной персонаж и уже выбранные split-слова
+        available = [c for c in characters if c != session.character]
+        random.shuffle(available)
         i = 0
         while i < len(civ_ids):
             size = random.choices([1, 2, 3], weights=[0.4, 0.4, 0.2], k=1)[0]
             size = min(size, len(civ_ids) - i)
-            word = random.choice(characters)
+            if not available:
+                # Если слова кончились — переиспользуем (крайне маловероятно)
+                available = [c for c in characters if c != session.character]
+                random.shuffle(available)
+            word = available.pop()
             session.split_words.append(word)
             for j in range(size):
                 for p in players:
@@ -276,7 +365,9 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
         elif p.user_id == prov_id:
             p.role = Role.PROVOCATEUR
             others = [c for c in characters if c != session.character]
-            p.fake_character = random.choice(others) if others else "Загадочный незнакомец"
+            p.fake_character = (
+                random.choice(others) if others else "Загадочный незнакомец"
+            )
         elif p.user_id == conf_id and alt_char:
             p.role = Role.CONFUSED
             p.alt_character = alt_char
@@ -287,7 +378,9 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
 
     # Обновляем стрики
     prov_ids = [prov_id] if prov_id else []
-    await update_streaks(list(spy_ids_set), prov_ids, [p.user_id for p in session.players])
+    await update_streaks(
+        list(spy_ids_set), prov_ids, [p.user_id for p in session.players]
+    )
 
 
 def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
@@ -333,8 +426,9 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
         hint_text = "\n".join(hints)
         try:
             await asyncio.sleep(0.05)
-            await bot.send_message(spy.user_id,
-                f"💡 <b>Раунд {round_num} — подсказка ({hint_count} шт.)</b>\n\n{hint_text}"
+            await bot.send_message(
+                spy.user_id,
+                f"💡 <b>Раунд {round_num} — подсказка ({hint_count} шт.)</b>\n\n{hint_text}",
             )
             spy.hint_used = True
         except Exception:
@@ -406,12 +500,16 @@ def process_vote_result(session: GameSession) -> dict | None:
         "all_voted": voted == total,
     }
 
-    if target.role in (Role.CIVILIAN, Role.CONFUSED) and (count >= majority or voted == total):
+    if target.role in (Role.CIVILIAN, Role.CONFUSED) and (
+        count >= majority or voted == total
+    ):
         result["outcome"] = "civilian_caught"
     elif target.role == Role.PROVOCATEUR and (count >= majority or voted == total):
         result["outcome"] = "provocateur_caught"
     elif target.role == Role.SPY and (count >= majority or voted == total):
-        remaining = sum(1 for p in session.players if p.role == Role.SPY and p.user_id != most_voted)
+        remaining = sum(
+            1 for p in session.players if p.role == Role.SPY and p.user_id != most_voted
+        )
         if remaining > 0:
             result["outcome"] = "spy_caught_continue"
             result["remaining_spies"] = remaining
@@ -428,15 +526,19 @@ def create_turn_order(session: GameSession) -> list[Player]:
     Создаёт очередь ходов.
     Шпионы имеют шанс 15% попасть в первые позиции, иначе идут в конец.
     """
-    civilians = [p for p in session.players if p.role in (Role.CIVILIAN, Role.PROVOCATEUR, Role.CONFUSED)]
+    civilians = [
+        p
+        for p in session.players
+        if p.role in (Role.CIVILIAN, Role.PROVOCATEUR, Role.CONFUSED)
+    ]
     spies = [p for p in session.players if p.role == Role.SPY]
-    
+
     random.shuffle(civilians)
     random.shuffle(spies)
-    
+
     order = []
     spy_positions = []
-    
+
     # Для каждого шпиона определяем, попадёт ли он в начало (15% шанс)
     for spy in spies:
         if random.random() < 0.15:  # 15% шанс начать раньше
@@ -446,21 +548,21 @@ def create_turn_order(session: GameSession) -> list[Player]:
             spy_positions.append((spy, pos))
         else:
             spy_positions.append((spy, None))  # В конец
-    
+
     # Собираем очередь
     order = civilians[:]
-    
+
     # Вставляем шпионов с ранними позициями (от большего к меньшему, чтобы не сдвигать)
     early_spies = [(spy, pos) for spy, pos in spy_positions if pos is not None]
     early_spies.sort(key=lambda x: x[1], reverse=True)
     for spy, pos in early_spies:
         order.insert(pos, spy)
-    
+
     # Добавляем остальных шпионов в конец
     for spy, pos in spy_positions:
         if pos is None:
             order.append(spy)
-    
+
     return order
 
 
