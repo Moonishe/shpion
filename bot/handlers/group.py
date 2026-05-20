@@ -2002,9 +2002,10 @@ async def cb_answer_question(callback: CallbackQuery):
 
 def _get_not_voted_names(session) -> str:
     """Возвращает строку с именами игроков, которые ещё не проголосовали."""
+    cancel_voters = _cancel_votes.get(session.chat_id, set())
     not_voted = []
     for p in session.players:
-        if p.vote_for is None:
+        if p.vote_for is None and p.user_id not in cancel_voters:
             name = (
                 f"@{html.escape(p.username)}"
                 if p.username
@@ -2198,9 +2199,13 @@ async def cb_cancel_vote(callback: CallbackQuery, bot: Bot):
         return
 
     user_id = callback.from_user.id
-    if not session.get_player(user_id):
+    player = session.get_player(user_id)
+    if not player:
         await callback.answer("❌ Ты не в игре.", show_alert=True)
         return
+
+    # Голос за отмену сбрасывает голос за участника
+    player.vote_for = None
 
     cancels = _cancel_votes.get(chat_id, set())
     cancels.add(user_id)
@@ -2255,6 +2260,13 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
     if voter.user_id == target_id:
         await callback.answer("❌ Нельзя голосовать за себя!", show_alert=True)
         return
+
+    # Голос за участника сбрасывает голос за отмену
+    cancels = _cancel_votes.get(chat_id)
+    if cancels:
+        cancels.discard(callback.from_user.id)
+        if not cancels:
+            _cancel_votes.pop(chat_id, None)
 
     # Разрешаем переголосовать
     changed = voter.vote_for is not None and voter.vote_for != target_id
