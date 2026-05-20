@@ -198,6 +198,9 @@ async def cmd_spy(message: Message):
         creator_full_name=message.from_user.full_name,
     )
 
+    # Сохраняем лобби в БД — переживёт рестарт бота
+    await lobby_service.persist_session(session)
+
     await message.answer(
         f"🎉 <b>{html.escape(message.from_user.full_name)}</b> создал игру!\n\n"
         f"{_lobby_text(session)}",
@@ -1113,7 +1116,7 @@ async def cmd_stop(message: Message):
     """Остановка игры."""
     chat_id = message.chat.id
     session = lobby_service.get_session(chat_id)
-    if not session:
+    if not session or session.state == GameState.FINISHED:
         await message.answer("❌ Нет активной игры.")
         return
     if not _can_control(session, message.from_user.id, message.from_user.username):
