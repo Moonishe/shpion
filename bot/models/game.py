@@ -9,16 +9,16 @@ class GameMode(Enum):
 
 
 class GameType(Enum):
-    CLASSIC = "classic"        # Классический режим с описаниями
-    QUESTIONS = "questions"    # Режим вопросов да/нет
+    CLASSIC = "classic"  # Классический режим с описаниями
+    QUESTIONS = "questions"  # Режим вопросов да/нет
     NO_TRAITORS = "no_traitors"  # Игра без предателей (никто не знает)
     ALL_TRAITORS = "all_traitors"  # Все предатели (никто не знает)
-    BLIND_SPY = "blind_spy"    # Слепой шпион — получает фейкового персонажа
+    BLIND_SPY = "blind_spy"  # Слепой шпион — получает фейкового персонажа
 
 
 class SettingsMode(Enum):
-    MANUAL = "manual"    # Ручной выбор настроек
-    RANDOM = "random"    # Рандомные настройки
+    MANUAL = "manual"  # Ручной выбор настроек
+    RANDOM = "random"  # Рандомные настройки
 
 
 class GameState(Enum):
@@ -35,7 +35,7 @@ class Role(Enum):
     CIVILIAN = "civilian"
     SPY = "spy"
     PROVOCATEUR = "provocateur"  # Мирный с фейковым персонажем, побеждает со шпионами
-    CONFUSED = "confused"        # Мирный с ДРУГИМ персонажем из той же категории
+    CONFUSED = "confused"  # Мирный с ДРУГИМ персонажем из той же категории
 
 
 @dataclass
@@ -48,9 +48,9 @@ class Player:
     has_described: bool = False
     vote_for: Optional[int] = None
     fake_character: str = ""  # Для провокатора
-    alt_character: str = ""   # Для путаника (другой персонаж из категории)
+    alt_character: str = ""  # Для путаника (другой персонаж из категории)
     split_character: str = ""  # Для split-режима — свой персонаж
-    hint_used: bool = False   # Использовал ли шпион подсказку
+    hint_used: bool = False  # Использовал ли шпион подсказку
     letter_sent: bool = False  # Отправил ли письмо
     received_letters: dict[int, str] = field(default_factory=dict)
 
@@ -71,15 +71,20 @@ class GameSession:
     winner: Optional[str] = None
     spy_count: int = 1  # По умолчанию 1 шпион
     provocateur_enabled: bool = False  # Включён ли провокатор
-    confused_enabled: bool = False     # Включён ли путаник (авто при 7+ игроках)
-    current_question_target: Optional[int] = None  # Кому задают вопрос (для режима вопросов)
+    confused_enabled: bool = False  # Включён ли путаник (авто при 7+ игроках)
+    current_question_target: Optional[int] = (
+        None  # Кому задают вопрос (для режима вопросов)
+    )
     questions_round: int = 0  # Раунд вопросов
     description_round: int = 0  # Раунд описаний (1-2 = обобщённые)
     host_mode: bool = False  # Режим ведущего
     host_id: Optional[int] = None  # ID ведущего
     split_character: str = ""  # Второй персонаж для split-режима (5% шанс)
-    split_words: list[str] = field(default_factory=list)  # Все розданные слова в split-режиме
+    split_words: list[str] = field(
+        default_factory=list
+    )  # Все розданные слова в split-режиме
 
+    lobby_msg_id: int = 0  # ID сообщения-лобби (для проверки устаревших)
     created_at: float = 0.0  # timestamp создания
     last_activity: float = 0.0  # timestamp последней активности
 

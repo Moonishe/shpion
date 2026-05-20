@@ -198,14 +198,15 @@ async def cmd_spy(message: Message):
         creator_full_name=message.from_user.full_name,
     )
 
-    # Сохраняем лобби в БД — переживёт рестарт бота
-    await lobby_service.persist_session(session)
-
-    await message.answer(
+    msg = await message.answer(
         f"🎉 <b>{html.escape(message.from_user.full_name)}</b> создал игру!\n\n"
         f"{_lobby_text(session)}",
         reply_markup=lobby_keyboard(session),
     )
+    session.lobby_msg_id = msg.message_id
+
+    # Сохраняем лобби в БД — переживёт рестарт бота
+    await lobby_service.persist_session(session)
 
 
 @router.callback_query(F.data == "join")
@@ -286,10 +287,12 @@ async def cb_play_again(callback: CallbackQuery):
         creator_full_name=user.full_name,
     )
     await callback.answer("🎉 Погнали!")
-    await callback.message.answer(
+    msg = await callback.message.answer(
         f"🎭 <b>{html.escape(user.full_name)}</b> создал новую игру!\n\n{_lobby_text(session)}",
         reply_markup=lobby_keyboard(session),
     )
+    session.lobby_msg_id = msg.message_id
+    await lobby_service.persist_session(session)
 
 
 @router.callback_query(F.data == "rules")
@@ -804,6 +807,12 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
     if not session:
         await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
         return
+    # Проверка на устаревшее сообщение лобби (после /stop или отмены)
+    if session.lobby_msg_id and callback.message.message_id != session.lobby_msg_id:
+        await callback.answer(
+            "⏳ Это устаревшее лобби. Напишите /spy.", show_alert=True
+        )
+        return
     if not _can_control(session, callback.from_user.id, callback.from_user.username):
         await callback.answer(
             "🔒 Только создатель или админ может запустить игру.", show_alert=True
@@ -1126,6 +1135,16 @@ async def cmd_stop(message: Message):
     _reroll_votes.pop(chat_id, None)
     _cancel_votes.pop(chat_id, None)
     session.state = GameState.FINISHED
+    # Отключаем кнопки на старом сообщении лобби
+    if session.lobby_msg_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=session.chat_id,
+                message_id=session.lobby_msg_id,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
     await lobby_service.end_session(chat_id)
     await message.answer(
         "🛑 <b>Игра остановлена.</b>", reply_markup=play_again_keyboard()
@@ -2570,5 +2589,5 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
 @router.message(Command("version"))
 async def cmd_version_group(message: Message):
     await message.answer(
-        '🎭 <b>Шпион</b> v1.3.4\n\n<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
+        '🎭 <b>Шпион</b> v1.3.5\n\n<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
     )

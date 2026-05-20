@@ -72,7 +72,7 @@ async def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(INIT_SQL)
-        
+
         # Миграции для новых колонок
         migrations = [
             ("sessions", "spy_count", "INTEGER NOT NULL DEFAULT 1"),
@@ -97,14 +97,18 @@ async def init_db():
             ("stats", "provocateur_streak", "INTEGER NOT NULL DEFAULT 0"),
             ("sessions", "split_character", "TEXT DEFAULT ''"),
             ("sessions", "split_words", "TEXT DEFAULT ''"),
+            ("sessions", "lobby_msg_id", "INTEGER NOT NULL DEFAULT 0"),
         ]
-        
+
         for table, column, col_type in migrations:
             try:
                 await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 await db.commit()
             except Exception as e:
-                if 'duplicate column' in str(e).lower() or 'already exists' in str(e).lower():
+                if (
+                    "duplicate column" in str(e).lower()
+                    or "already exists" in str(e).lower()
+                ):
                     pass
                 else:
                     raise
@@ -119,9 +123,10 @@ async def save_session(session):
                 chat_id, creator_id, mode, game_type, settings_mode, state, character, category,
                 current_turn_index, spy_guess, winner, spy_count,
                 provocateur_enabled, confused_enabled, current_question_target, questions_round,
-                description_round, created_at, last_activity, host_mode, host_id, split_character, split_words
+                description_round, created_at, last_activity, host_mode, host_id, split_character, split_words,
+                lobby_msg_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 creator_id=excluded.creator_id,
                 mode=excluded.mode,
@@ -143,7 +148,8 @@ async def save_session(session):
                 host_mode=excluded.host_mode,
                 host_id=excluded.host_id,
                 split_character=excluded.split_character,
-                split_words=excluded.split_words
+                split_words=excluded.split_words,
+                lobby_msg_id=excluded.lobby_msg_id
             """,
             (
                 session.chat_id,
@@ -169,6 +175,7 @@ async def save_session(session):
                 session.host_id,
                 session.split_character,
                 ",".join(session.split_words) if session.split_words else "",
+                session.lobby_msg_id,
             ),
         )
         await db.execute("DELETE FROM players WHERE chat_id = ?", (session.chat_id,))
@@ -202,7 +209,15 @@ async def save_session(session):
 
 async def load_session(chat_id: int):
     """Загрузка сессии из БД."""
-    from bot.models.game import GameSession, GameMode, GameType, SettingsMode, GameState, Player, Role
+    from bot.models.game import (
+        GameSession,
+        GameMode,
+        GameType,
+        SettingsMode,
+        GameState,
+        Player,
+        Role,
+    )
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -212,26 +227,46 @@ async def load_session(chat_id: int):
             row = await cursor.fetchone()
             if not row:
                 return None
-            
+
             # Безопасное получение значений с дефолтами
             game_type_val = row["game_type"] if "game_type" in row.keys() else "classic"
-            settings_mode_val = row["settings_mode"] if "settings_mode" in row.keys() else "manual"
+            settings_mode_val = (
+                row["settings_mode"] if "settings_mode" in row.keys() else "manual"
+            )
             raw_cat = row["category"] if "category" in row.keys() else "*"
             category_list = raw_cat.split(",") if raw_cat else ["*"]
-            provocateur_val = row["provocateur_enabled"] if "provocateur_enabled" in row.keys() else 0
-            confused_val = row["confused_enabled"] if "confused_enabled" in row.keys() else 0
-            question_target = row["current_question_target"] if "current_question_target" in row.keys() else None
-            questions_round = row["questions_round"] if "questions_round" in row.keys() else 0
-            description_round = row["description_round"] if "description_round" in row.keys() else 0
+            provocateur_val = (
+                row["provocateur_enabled"] if "provocateur_enabled" in row.keys() else 0
+            )
+            confused_val = (
+                row["confused_enabled"] if "confused_enabled" in row.keys() else 0
+            )
+            question_target = (
+                row["current_question_target"]
+                if "current_question_target" in row.keys()
+                else None
+            )
+            questions_round = (
+                row["questions_round"] if "questions_round" in row.keys() else 0
+            )
+            description_round = (
+                row["description_round"] if "description_round" in row.keys() else 0
+            )
             created_at = row["created_at"] if "created_at" in row.keys() else 0.0
-            last_activity = row["last_activity"] if "last_activity" in row.keys() else 0.0
+            last_activity = (
+                row["last_activity"] if "last_activity" in row.keys() else 0.0
+            )
             host_mode = row["host_mode"] if "host_mode" in row.keys() else 0
             host_id = row["host_id"] if "host_id" in row.keys() else None
-            split_character = row["split_character"] if "split_character" in row.keys() else ""
+            split_character = (
+                row["split_character"] if "split_character" in row.keys() else ""
+            )
             split_words_raw = row["split_words"] if "split_words" in row.keys() else ""
-            split_words = [w for w in split_words_raw.split(",") if w] if split_words_raw else []
+            split_words = (
+                [w for w in split_words_raw.split(",") if w] if split_words_raw else []
+            )
+            lobby_msg_id = row["lobby_msg_id"] if "lobby_msg_id" in row.keys() else 0
 
-            
             session = GameSession(
                 chat_id=row["chat_id"],
                 creator_id=row["creator_id"],
@@ -256,17 +291,22 @@ async def load_session(chat_id: int):
                 host_id=host_id,
                 split_character=split_character,
                 split_words=split_words,
+                lobby_msg_id=lobby_msg_id,
             )
-            
+
         async with db.execute(
             "SELECT * FROM players WHERE chat_id = ?", (chat_id,)
         ) as cursor:
             async for row in cursor:
-                fake_char = row["fake_character"] if "fake_character" in row.keys() else ""
+                fake_char = (
+                    row["fake_character"] if "fake_character" in row.keys() else ""
+                )
                 alt_char = row["alt_character"] if "alt_character" in row.keys() else ""
                 hint_used = row["hint_used"] if "hint_used" in row.keys() else 0
                 letter_sent = row["letter_sent"] if "letter_sent" in row.keys() else 0
-                split_char = row["split_character"] if "split_character" in row.keys() else ""
+                split_char = (
+                    row["split_character"] if "split_character" in row.keys() else ""
+                )
 
                 player = Player(
                     user_id=row["user_id"],
@@ -285,7 +325,8 @@ async def load_session(chat_id: int):
                 session.players.append(player)
 
         async with db.execute(
-            "SELECT from_user_id, to_user_id, text FROM letters WHERE chat_id = ?", (chat_id,)
+            "SELECT from_user_id, to_user_id, text FROM letters WHERE chat_id = ?",
+            (chat_id,),
         ) as cursor:
             async for row in cursor:
                 for player in session.players:
@@ -304,7 +345,9 @@ async def delete_session(chat_id: int):
         await db.commit()
 
 
-async def update_stats(user_id: int, won: bool, hint_used: bool = False, letter_sent: bool = False):
+async def update_stats(
+    user_id: int, won: bool, hint_used: bool = False, letter_sent: bool = False
+):
     """Обновляет статистику игрока."""
     won_val = 1 if won else 0
     lost_val = 0 if won else 1
@@ -322,8 +365,17 @@ async def update_stats(user_id: int, won: bool, hint_used: bool = False, letter_
                 hints_used = hints_used + ?,
                 letters_sent = letters_sent + ?
             """,
-            (user_id, won_val, lost_val, hint_val, letter_val,
-             won_val, lost_val, hint_val, letter_val),
+            (
+                user_id,
+                won_val,
+                lost_val,
+                hint_val,
+                letter_val,
+                won_val,
+                lost_val,
+                hint_val,
+                letter_val,
+            ),
         )
         await db.commit()
 
@@ -362,7 +414,9 @@ async def update_streaks(spy_ids: list[int], prov_ids: list[int], all_ids: list[
                 "UPDATE stats SET provocateur_streak = provocateur_streak + 1, spy_streak = MAX(0, spy_streak - 1) WHERE user_id = ?",
                 (uid,),
             )
-        other_ids = [uid for uid in all_ids if uid not in spy_ids and uid not in prov_ids]
+        other_ids = [
+            uid for uid in all_ids if uid not in spy_ids and uid not in prov_ids
+        ]
         for uid in other_ids:
             await db.execute(
                 "UPDATE stats SET spy_streak = MAX(0, spy_streak - 1), provocateur_streak = MAX(0, provocateur_streak - 1) WHERE user_id = ?",
@@ -410,15 +464,15 @@ async def cleanup_stale_sessions(max_age: float = 7200):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "DELETE FROM players WHERE chat_id IN (SELECT chat_id FROM sessions WHERE last_activity > 0 AND last_activity < ?)",
-            (cutoff,)
+            (cutoff,),
         )
         await db.execute(
             "DELETE FROM letters WHERE chat_id IN (SELECT chat_id FROM sessions WHERE last_activity > 0 AND last_activity < ?)",
-            (cutoff,)
+            (cutoff,),
         )
         await db.execute(
             "DELETE FROM sessions WHERE last_activity > 0 AND last_activity < ?",
-            (cutoff,)
+            (cutoff,),
         )
 
 
