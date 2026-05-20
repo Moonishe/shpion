@@ -8,8 +8,10 @@ from aiogram.filters import Command
 from bot.models.game import Role, GameType, GameState
 from bot.services import lobby_service
 from bot.services.game_service import (
-    check_victory, get_next_player,
-    check_rate_limit, record_stats
+    check_victory,
+    get_next_player,
+    check_rate_limit,
+    record_stats,
 )
 from bot.keyboards.inline import play_again_keyboard, host_confirm_keyboard
 from bot.models.database import save_letter, mark_user_started, load_started_users
@@ -39,12 +41,14 @@ def get_unstarted(players) -> list[str]:
 # 📱 ПРИВАТНЫЕ КОМАНДЫ
 # ═══════════════════════════════════════════════════════════════
 
+
 @router.message(Command("start"))
 async def cmd_start_private(message: Message):
     """Приветствие в ЛС."""
     _started_users.add(message.from_user.id)
     await mark_user_started(message.from_user.id)
-    await message.answer("""
+    await message.answer(
+        """
 🎭 <b>ШПИОН</b> — бот для игры
 
 Добавь меня в группу, напиши /spy — и играйте!
@@ -61,7 +65,8 @@ async def cmd_start_private(message: Message):
 🤡 Провокатор — знает фейкового
 
 ⚠️ Напиши /start до начала игры, чтобы получать роли!
-""".strip())
+""".strip()
+    )
 
 
 @router.message(Command("guess"))
@@ -95,9 +100,7 @@ async def cmd_guess(message: Message, bot: Bot):
             break
 
     if not session or not player:
-        await message.answer(
-            "🎭 Ты не в игре."
-        )
+        await message.answer("🎭 Ты не в игре.")
         return
 
     if session.game_type == GameType.BLIND_SPY:
@@ -118,15 +121,20 @@ async def cmd_guess(message: Message, bot: Bot):
         except Exception as e:
             logger.warning("Не удалось записать статистику: %s", e)
 
-        await bot.send_message(session.chat_id, f"""
+        await bot.send_message(
+            session.chat_id,
+            f"""
 🕵️ <b>ШПИОН ПОБЕДИЛ!</b>
 
 <b>{html.escape(message.from_user.full_name)}</b> угадал: <code>{html.escape(session.character)}</code>
-""".strip(), reply_markup=play_again_keyboard())
+""".strip(),
+            reply_markup=play_again_keyboard(),
+        )
 
         await message.answer("🎉 Ты угадал! Победа за шпионами!")
         # Отменяем таймер хода если был
         from bot.handlers.group import _cancel_turn_timer
+
         await _cancel_turn_timer(session.chat_id)
         session.state = GameState.FINISHED
         await lobby_service.end_session(session.chat_id)
@@ -136,24 +144,31 @@ async def cmd_guess(message: Message, bot: Bot):
         except Exception as e:
             logger.warning("Не удалось записать статистику: %s", e)
 
-        await bot.send_message(session.chat_id, f"""
+        await bot.send_message(
+            session.chat_id,
+            f"""
 👿 <b>ПОБЕДИТЕЛЬ!</b>
 
 <b>{html.escape(message.from_user.full_name)}</b> угадал первым: <code>{html.escape(session.character)}</code>
 Все были предателями!
-""".strip(), reply_markup=play_again_keyboard())
+""".strip(),
+            reply_markup=play_again_keyboard(),
+        )
 
         await message.answer("🎉 Ты угадал первым! Победа в режиме «Все предатели»!")
         from bot.handlers.group import _cancel_turn_timer
+
         await _cancel_turn_timer(session.chat_id)
         session.state = GameState.FINISHED
         await lobby_service.end_session(session.chat_id)
     else:
-        await message.answer(f"""
+        await message.answer(
+            f"""
 ❌ Мимо. <code>{html.escape(guess)}</code> — не тот персонаж.
 
 Слушай дальше, пробуй снова.
-""".strip())
+""".strip()
+        )
 
 
 @router.message(Command("hint"))
@@ -195,23 +210,27 @@ async def cmd_hint(message: Message):
 
 @router.callback_query(F.data.startswith("hint_"))
 async def cb_hint(callback: CallbackQuery):
-    await callback.answer("💡 Подсказки приходят автоматически каждый раунд.", show_alert=True)
-
+    await callback.answer(
+        "💡 Подсказки приходят автоматически каждый раунд.", show_alert=True
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
 # 👤 ВЕДУЩИЙ: подтверждение персонажа / reroll (ЛС)
 # ═══════════════════════════════════════════════════════════════
 
+
 @router.callback_query(F.data.startswith("host_accept_"))
 async def cb_host_accept_private(callback: CallbackQuery, bot: Bot):
     from bot.handlers.group import cb_host_accept
+
     await cb_host_accept(callback, bot)
 
 
 @router.callback_query(F.data.startswith("host_reroll_"))
 async def cb_host_reroll_private(callback: CallbackQuery, bot: Bot):
     from bot.handlers.group import cb_host_reroll
+
     await cb_host_reroll(callback, bot)
 
 
@@ -219,17 +238,22 @@ async def cb_host_reroll_private(callback: CallbackQuery, bot: Bot):
 async def cmd_mystats(message: Message):
     """Статистика игрока."""
     from bot.models.database import get_stats
+
     stats = await get_stats(message.from_user.id)
     if not stats:
         await message.answer(
-            "📊 <b>Твоя статистика</b>\n\n"
-            "Пока нет сыгранных игр. Сыграй первую!"
+            "📊 <b>Твоя статистика</b>\n\nПока нет сыгранных игр. Сыграй первую!"
         )
         return
 
-    winrate = (stats["games_won"] / stats["games_played"] * 100) if stats["games_played"] > 0 else 0
+    winrate = (
+        (stats["games_won"] / stats["games_played"] * 100)
+        if stats["games_played"] > 0
+        else 0
+    )
 
-    await message.answer(f"""
+    await message.answer(
+        f"""
 📊 <b>ТВОЯ СТАТИСТИКА</b>
 
 🎮 Сыграно игр: <b>{stats["games_played"]}</b>
@@ -238,13 +262,15 @@ async def cmd_mystats(message: Message):
 📈 Винрейт: <b>{winrate:.1f}%</b>
 💡 Подсказок взято: <b>{stats["hints_used"]}</b>
 💌 Писем отправлено: <b>{stats["letters_sent"]}</b>
-""".strip())
+""".strip()
+    )
 
 
 @router.message(Command("help"))
 async def cmd_help_private(message: Message):
     """Помощь в ЛС."""
-    await message.answer("""
+    await message.answer(
+        """
 ❓ <b>КОМАНДЫ</b>
 
 /start — начать
@@ -261,7 +287,8 @@ async def cmd_help_private(message: Message):
 
 🎮 Как играть: добавь бота в группу, напиши /spy
 ⚠️ Напиши /start до игры, чтобы получать роли!
-""".strip())
+""".strip()
+    )
 
 
 @router.message(Command("send"))
@@ -318,7 +345,7 @@ async def cmd_send(message: Message, bot: Bot):
     target_player = None
 
     # 1. По @username
-    target_clean = target_username.lstrip('@')
+    target_clean = target_username.lstrip("@")
     for p in session.players:
         if p.username and p.username.lower() == target_clean.lower():
             target_player = p
@@ -339,7 +366,9 @@ async def cmd_send(message: Message, bot: Bot):
                 break
 
     if not target_player:
-        await message.answer(f"❌ {target_username} не в этой игре.\n\n💡 /send @username Текст\nИли ответь реплаем: /send Текст")
+        await message.answer(
+            f"❌ {target_username} не в этой игре.\n\n💡 /send @username Текст\nИли ответь реплаем: /send Текст"
+        )
         return
 
     if target_player.user_id == player.user_id:
@@ -348,24 +377,34 @@ async def cmd_send(message: Message, bot: Bot):
 
     player.letter_sent = True
     target_player.received_letters[player.user_id] = letter_text
-    await save_letter(session.chat_id, player.user_id, target_player.user_id, letter_text)
+    await save_letter(
+        session.chat_id, player.user_id, target_player.user_id, letter_text
+    )
 
     safe_letter_text = html.escape(letter_text)
-    await message.answer(f"✅ Отправлено <b>{html.escape(target_player.full_name)}</b>!\n📝 <i>{safe_letter_text}</i>")
+    await message.answer(
+        f"✅ Отправлено <b>{html.escape(target_player.full_name)}</b>!\n📝 <i>{safe_letter_text}</i>"
+    )
 
     try:
-        await bot.send_message(target_player.user_id, f"""
+        await bot.send_message(
+            target_player.user_id,
+            f"""
 💌 <b>ПИСЬМО</b> от <b>{html.escape(player.full_name)}</b>
 
 <i>{safe_letter_text}</i>
-""".strip())
+""".strip(),
+        )
     except Exception as e:
-        logger.warning("Не удалось доставить письмо (id=%d): %s", target_player.user_id, e)
+        logger.warning(
+            "Не удалось доставить письмо (id=%d): %s", target_player.user_id, e
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
 # 👤 ВЕДУЩИЙ: установка персонажа
 # ═══════════════════════════════════════════════════════════════
+
 
 @router.message(Command("setchar"))
 async def cmd_setchar(message: Message):
@@ -408,10 +447,12 @@ async def cmd_setchar(message: Message):
         f"✅ Персонаж установлен: <code>{html.escape(char_name)}</code>\n\n"
         f"Нажми ✅ Оставить чтобы начать игру, "
         f"или отправь ещё один <code>/setchar</code>.",
-        reply_markup=host_confirm_keyboard(session.chat_id)
+        reply_markup=host_confirm_keyboard(session.chat_id),
     )
 
 
 @router.message(Command("version"))
 async def cmd_version_private(message: Message):
-    await message.answer("🎭 <b>Шпион</b> v1.3.2\n\n<a href=\"https://github.com/Moonishe/shpion\">github.com/Moonishe/shpion</a>")
+    await message.answer(
+        '🎭 <b>Шпион</b> v1.3.3\n\n<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
+    )
