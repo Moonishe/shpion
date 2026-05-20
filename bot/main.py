@@ -1,10 +1,15 @@
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeAllGroupChats,
+)
 
 from bot.config import BOT_TOKEN
 from bot.models.database import init_db, get_all_active_sessions, cleanup_stale_sessions
@@ -49,12 +54,14 @@ async def set_bot_commands(bot: Bot):
     """Устанавливает команды бота для меню с таймаутом."""
     try:
         await asyncio.wait_for(
-            bot.set_my_commands(PRIVATE_COMMANDS, scope=BotCommandScopeAllPrivateChats()),
-            timeout=10
+            bot.set_my_commands(
+                PRIVATE_COMMANDS, scope=BotCommandScopeAllPrivateChats()
+            ),
+            timeout=10,
         )
         await asyncio.wait_for(
             bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats()),
-            timeout=10
+            timeout=10,
         )
         logging.info("Команды бота установлены.")
     except asyncio.TimeoutError:
@@ -80,7 +87,11 @@ def main():
                 try:
                     s = await restore_session(chat_id)
                     if s:
-                        logger.info("Восстановлена сессия для чата %d (состояние: %s)", chat_id, s.state.value)
+                        logger.info(
+                            "Восстановлена сессия для чата %d (состояние: %s)",
+                            chat_id,
+                            s.state.value,
+                        )
                 except Exception as e:
                     logger.warning("Не удалось восстановить сессию %d: %s", chat_id, e)
             logger.info("Бот запущен. Восстановлено %d сессий.", len(active))
@@ -97,6 +108,7 @@ def main():
 
     async def lobby_cleanup_loop():
         from bot.services.lobby_service import cleanup_stale_lobbies
+
         while True:
             await asyncio.sleep(30)
             try:
@@ -104,15 +116,31 @@ def main():
             except Exception as e:
                 logger.warning("Ошибка при очистке лобби: %s", e)
 
+    async def health_check_server():
+        """Минимальный HTTP сервер для Railway health check (слушает $PORT)."""
+        port = int(os.environ.get("PORT", 8080))
+
+        async def handler(reader, writer):
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handler, host="0.0.0.0", port=port)
+        logger.info("Health check server listening on 0.0.0.0:%d", port)
+        async with server:
+            await server.serve_forever()
+
     async def start():
         await on_startup()
         cleanup_task = asyncio.create_task(cleanup_loop())
         lobby_task = asyncio.create_task(lobby_cleanup_loop())
+        health_task = asyncio.create_task(health_check_server())
         try:
             await dp.start_polling(bot)
         finally:
             cleanup_task.cancel()
             lobby_task.cancel()
+            health_task.cancel()
             await bot.session.close()
 
     try:
