@@ -88,8 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_letters_chat_id ON letters(chat_id);
 async def init_db():
     """Инициализация базы данных."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.executescript(INIT_SQL)
 
         # Миграции для новых колонок
@@ -135,8 +135,8 @@ async def init_db():
 
 async def save_session(session):
     """Сохранение сессии в БД."""
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.execute(
             """
             INSERT INTO sessions (
@@ -356,8 +356,8 @@ async def load_session(chat_id: int):
 
 async def delete_session(chat_id: int):
     """Удаление сессии из БД."""
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.execute("DELETE FROM letters WHERE chat_id = ?", (chat_id,))
         await db.execute("DELETE FROM players WHERE chat_id = ?", (chat_id,))
         await db.execute("DELETE FROM sessions WHERE chat_id = ?", (chat_id,))
@@ -372,8 +372,8 @@ async def update_stats(
     lost_val = 0 if won else 1
     hint_val = 1 if hint_used else 0
     letter_val = 1 if letter_sent else 0
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.execute(
             """
             INSERT INTO stats (user_id, games_played, games_won, games_lost, hints_used, letters_sent)
@@ -404,8 +404,8 @@ async def update_stats_batch(updates: list[tuple]):
     """Массовое обновление статистики в одном соединении."""
     if not updates:
         return
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         for user_id, won, hint_used, letter_sent in updates:
             won_val = 1 if won else 0
             lost_val = 0 if won else 1
@@ -453,8 +453,8 @@ async def get_streaks(user_ids: list[int]) -> dict[int, dict]:
 
 async def update_streaks(spy_ids: list[int], prov_ids: list[int], all_ids: list[int]):
     """Обновляет стрики: шпионы/провокаторы +1, остальные −1 (мин 0)."""
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         for uid in all_ids:
             await db.execute(
                 "INSERT INTO stats (user_id, games_played, games_won, games_lost, hints_used, letters_sent, spy_streak, provocateur_streak) "
@@ -497,8 +497,8 @@ async def get_stats(user_id: int) -> dict | None:
 
 async def save_letter(chat_id: int, from_user_id: int, to_user_id: int, text: str):
     """Сохраняет письмо в БД."""
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.execute(
             "INSERT INTO letters (chat_id, from_user_id, to_user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
             (chat_id, from_user_id, to_user_id, text, time.time()),
@@ -526,8 +526,8 @@ async def cleanup_stale_sessions(max_age: float = 600):
     from bot.services.lobby_service import _sessions
 
     stale_ids = []
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         async with db.execute(
             "SELECT chat_id FROM sessions WHERE last_activity > 0 AND last_activity < ?",
             (cutoff,),
@@ -555,8 +555,8 @@ async def cleanup_stale_sessions(max_age: float = 600):
 
 
 async def mark_user_started(user_id: int):
+    db = await get_db()
     async with _db_lock:
-        db = await get_db()
         await db.execute(
             "INSERT OR IGNORE INTO started_users (user_id) VALUES (?)",
             (user_id,),
