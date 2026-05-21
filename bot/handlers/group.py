@@ -125,24 +125,33 @@ def _lobby_text(session) -> str:
     if not players_list:
         players_list = "— пока никого"
 
-    if session.settings_mode == SettingsMode.RANDOM:
-        settings_block = "🎲 <b>Рандом</b> — настройки выберутся при старте"
-    else:
-        mode_text = f"{session.spy_count} шпион(ов)" if session.spy_count else "1 шпион"
-        cat_name_text = get_category_name(session.categories)
     game_type_map = {
         GameType.CLASSIC: "📝 Классика",
         GameType.QUESTIONS: "❓ Вопросы",
         GameType.BLIND_SPY: "🎭 Слепой шпион",
     }
-    game_type_text = game_type_map.get(session.game_type, "📝 Классика")
-    provocateur_text = "есть" if session.provocateur_enabled else "нет"
-    host_text = ""
-    if session.host_mode:
-        host_obj = session.get_player(session.host_id)
-        host_name = html.escape(host_obj.full_name) if host_obj else "???"
-        host_text = f"\n👤 Ведущий: {host_name}"
-    settings_block = f"🕵️ <b>Шпионы:</b> {mode_text}\n📂 {cat_name_text}  •  🎯 {game_type_text}  •  🤡 Провокатор: {provocateur_text}{host_text}"
+    if session.settings_mode == SettingsMode.RANDOM:
+        mode_text = "🎲 Рандом"
+        cat_name_text = "случайные"
+        game_type_text = game_type_map.get(session.game_type, "📝 Классика")
+        provocateur_text = "есть" if session.provocateur_enabled else "нет"
+        host_text = ""
+        if session.host_mode:
+            host_obj = session.get_player(session.host_id)
+            host_name = html.escape(host_obj.full_name) if host_obj else "???"
+            host_text = f"\n👤 Ведущий: {host_name}"
+        settings_block = f"🕵️ <b>Шпионы:</b> 🎲 Рандом\n📂 {cat_name_text}  •  🎯 {game_type_text}  •  🤡 Провокатор: {provocateur_text}{host_text}"
+    else:
+        mode_text = f"{session.spy_count} шпион(ов)" if session.spy_count else "1 шпион"
+        cat_name_text = get_category_name(session.categories)
+        game_type_text = game_type_map.get(session.game_type, "📝 Классика")
+        provocateur_text = "есть" if session.provocateur_enabled else "нет"
+        host_text = ""
+        if session.host_mode:
+            host_obj = session.get_player(session.host_id)
+            host_name = html.escape(host_obj.full_name) if host_obj else "???"
+            host_text = f"\n👤 Ведущий: {host_name}"
+        settings_block = f"🕵️ <b>Шпионы:</b> {mode_text}\n📂 {cat_name_text}  •  🎯 {game_type_text}  •  🤡 Провокатор: {provocateur_text}{host_text}"
 
     return f"""
 🎭 <b>ШПИОН</b> — лобби
@@ -216,57 +225,63 @@ async def cb_join(callback: CallbackQuery):
         await callback.answer("⏳ Слишком часто. Подожди.", show_alert=True)
         return
     chat_id = callback.message.chat.id
-    session = lobby_service.get_session(chat_id)
-    if not session:
-        await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
-        return
-    if session.state != GameState.LOBBY:
-        await callback.answer("⏳ Игра уже началась.", show_alert=True)
-        return
+    async with lobby_service.get_lock(chat_id):
+        session = lobby_service.get_session(chat_id)
+        if not session:
+            await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
+            return
+        if session.state != GameState.LOBBY:
+            await callback.answer("⏳ Игра уже началась.", show_alert=True)
+            return
 
-    user = callback.from_user
-    ok = lobby_service.add_player(session, user.id, user.username or "", user.full_name)
-    if not ok:
-        await callback.answer("⚠️ Уже в игре или нет мест.", show_alert=True)
-        return
+        user = callback.from_user
+        ok = lobby_service.add_player(
+            session, user.id, user.username or "", user.full_name
+        )
+        if not ok:
+            await callback.answer("⚠️ Уже в игре или нет мест.", show_alert=True)
+            return
 
-    await callback.answer(f"✅ {user.full_name} присоединился!")
-    update_session_activity(session)
-    await callback.message.edit_text(
-        _lobby_text(session),
-        reply_markup=lobby_keyboard(session),
-    )
+        await callback.answer(f"✅ {user.full_name} присоединился!")
+        update_session_activity(session)
+        await lobby_service.persist_session(session)
+        await callback.message.edit_text(
+            _lobby_text(session),
+            reply_markup=lobby_keyboard(session),
+        )
 
 
 @router.callback_query(F.data == "leave")
 async def cb_leave(callback: CallbackQuery):
     """Выход из лобби."""
     chat_id = callback.message.chat.id
-    session = lobby_service.get_session(chat_id)
-    if not session:
-        await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
-        return
-    if session.state != GameState.LOBBY:
-        await callback.answer("🚫 Нельзя выйти во время игры.", show_alert=True)
-        return
+    async with lobby_service.get_lock(chat_id):
+        session = lobby_service.get_session(chat_id)
+        if not session:
+            await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
+            return
+        if session.state != GameState.LOBBY:
+            await callback.answer("🚫 Нельзя выйти во время игры.", show_alert=True)
+            return
 
-    user = callback.from_user
-    if user.id == session.creator_id:
-        await callback.answer(
-            "👑 Создатель так не может. Жми ❌ Отменить.", show_alert=True
+        user = callback.from_user
+        if user.id == session.creator_id:
+            await callback.answer(
+                "👑 Создатель так не может. Жми ❌ Отменить.", show_alert=True
+            )
+            return
+
+        ok = lobby_service.remove_player(session, user.id)
+        if not ok:
+            await callback.answer("⚠️ Тебя нет в игре.", show_alert=True)
+            return
+
+        await callback.answer(f"🚪 {user.full_name} вышел из игры.")
+        await lobby_service.persist_session(session)
+        await callback.message.edit_text(
+            _lobby_text(session),
+            reply_markup=lobby_keyboard(session),
         )
-        return
-
-    ok = lobby_service.remove_player(session, user.id)
-    if not ok:
-        await callback.answer("⚠️ Тебя нет в игре.", show_alert=True)
-        return
-
-    await callback.answer(f"🚪 {user.full_name} вышел из игры.")
-    await callback.message.edit_text(
-        _lobby_text(session),
-        reply_markup=lobby_keyboard(session),
-    )
 
 
 @router.callback_query(F.data == "play_again")
@@ -275,17 +290,18 @@ async def cb_play_again(callback: CallbackQuery):
     chat_id = callback.message.chat.id
     user = callback.from_user
 
-    existing = lobby_service.get_session(chat_id)
-    if existing and existing.state != GameState.FINISHED:
-        await callback.answer("⚠️ Уже есть игра.", show_alert=True)
-        return
+    async with lobby_service.get_lock(chat_id):
+        existing = lobby_service.get_session(chat_id)
+        if existing and existing.state != GameState.FINISHED:
+            await callback.answer("⚠️ Уже есть игра.", show_alert=True)
+            return
 
-    session = lobby_service.create_session(
-        chat_id=chat_id,
-        creator_id=user.id,
-        creator_username=user.username or "",
-        creator_full_name=user.full_name,
-    )
+        session = lobby_service.create_session(
+            chat_id=chat_id,
+            creator_id=user.id,
+            creator_username=user.username or "",
+            creator_full_name=user.full_name,
+        )
     await callback.answer("🎉 Погнали!")
     msg = await callback.message.answer(
         f"🎭 <b>{html.escape(user.full_name)}</b> создал новую игру!\n\n{_lobby_text(session)}",
@@ -744,9 +760,7 @@ async def cb_host_accept(callback: CallbackQuery, bot: Bot):
             await asyncio.sleep(0.05)
             await bot.send_message(p.user_id, text)
         except Exception as e:
-            logger.warning(
-                "Не удалось отправить роль %s (id=%d): %s", p.full_name, p.user_id, e
-            )
+            logger.warning("Не удалось отправить роль (id=%d): %s", p.user_id, e)
             failed.append(html.escape(p.full_name))
 
     if failed:
@@ -803,79 +817,122 @@ async def cb_host_reroll(callback: CallbackQuery, bot: Bot):
 async def cb_start(callback: CallbackQuery, bot: Bot):
     """Запуск игры."""
     chat_id = callback.message.chat.id
-    session = lobby_service.get_session(chat_id)
-    if not session:
-        await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
-        return
-    # Проверка на устаревшее сообщение лобби (после /stop или отмены)
-    if session.lobby_msg_id and callback.message.message_id != session.lobby_msg_id:
-        await callback.answer(
-            "⏳ Это устаревшее лобби. Напишите /spy.", show_alert=True
-        )
-        return
-    if not _can_control(session, callback.from_user.id, callback.from_user.username):
-        await callback.answer(
-            "🔒 Только создатель или админ может запустить игру.", show_alert=True
-        )
-        return
-    if not session.can_start():
-        await callback.answer("👥 Нужно минимум 2 игрока!", show_alert=True)
-        return
 
-    import random as _random
+    async with lobby_service.get_lock(chat_id):
+        session = lobby_service.get_session(chat_id)
+        if not session:
+            await callback.answer("⏳ Этой игры больше нет.", show_alert=True)
+            return
+        # Проверка на устаревшее сообщение лобби (после /stop или отмены)
+        if session.lobby_msg_id and callback.message.message_id != session.lobby_msg_id:
+            await callback.answer(
+                "⏳ Это устаревшее лобби. Напишите /spy.", show_alert=True
+            )
+            return
+        if not _can_control(
+            session, callback.from_user.id, callback.from_user.username
+        ):
+            await callback.answer(
+                "🔒 Только создатель или админ может запустить игру.", show_alert=True
+            )
+            return
+        if not session.can_start():
+            await callback.answer("👥 Нужно минимум 2 игрока!", show_alert=True)
+            return
 
-    # Если рандомный режим — рандомизируем настройки
-    if session.settings_mode == SettingsMode.RANDOM:
-        randomize_settings(session)
+        import random as _random
 
-    # Адаптивный спецрежим: выбирается один из 4 (или ничего)
-    mode = _pick_special_mode(chat_id, len(session.players))
-    if mode == "no_traitors":
-        session.game_type = GameType.NO_TRAITORS
-    elif mode == "all_traitors":
-        session.game_type = GameType.ALL_TRAITORS
-    elif mode == "blind_spy":
-        session.game_type = GameType.BLIND_SPY
-    elif mode == "split":
-        session.split_character = "split_pending"  # метка для assign_roles
+        # Если рандомный режим — рандомизируем настройки
+        if session.settings_mode == SettingsMode.RANDOM:
+            if not randomize_settings(session):
+                await callback.answer(
+                    "❌ Нет категорий персонажей! Добавьте их.", show_alert=True
+                )
+                return
 
-    # Проверяем, есть ли персонажи в выбранных категориях
-    from bot.config import get_characters_by_category
+        # Адаптивный спецрежим: выбирается один из 4 (или ничего)
+        mode = _pick_special_mode(chat_id, len(session.players))
+        if mode == "no_traitors":
+            session.game_type = GameType.NO_TRAITORS
+        elif mode == "all_traitors":
+            session.game_type = GameType.ALL_TRAITORS
+        elif mode == "blind_spy":
+            session.game_type = GameType.BLIND_SPY
+        elif mode == "split":
+            session.split_character = "split_pending"  # метка для assign_roles
 
-    characters = get_characters_by_category(session.categories)
-    if not characters:
-        await callback.answer(
-            "❌ В выбранных категориях нет персонажей! Выберите другие.",
-            show_alert=True,
-        )
-        return
+        # Проверяем, есть ли персонажи в выбранных категориях
+        from bot.config import get_characters_by_category
 
-    if not session.host_mode and session.state != GameState.LOBBY:
-        await callback.answer("⏳ Игра уже началась.", show_alert=True)
-        return
+        characters = get_characters_by_category(session.categories)
+        if not characters:
+            await callback.answer(
+                "❌ В выбранных категориях нет персонажей! Выберите другие.",
+                show_alert=True,
+            )
+            return
 
-    from bot.handlers.private import is_user_started, get_unstarted
+        if not session.host_mode and session.state != GameState.LOBBY:
+            await callback.answer("⏳ Игра уже началась.", show_alert=True)
+            return
 
-    unstarted = get_unstarted(session.players)
-    if unstarted:
-        await callback.answer(
-            f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и потом запускайте.",
-            show_alert=True,
-        )
-        return
+        from bot.handlers.private import is_user_started, get_unstarted
 
-    # Режим ведущего: только выбираем персонажа, ждём подтверждения
+        unstarted = get_unstarted(session.players)
+        if unstarted:
+            await callback.answer(
+                f"⚠️ Эти игроки не написали /start боту в ЛС:\n{', '.join(html.escape(u) for u in unstarted)}\n\nПусть напишут /start и потом запускайте.",
+                show_alert=True,
+            )
+            return
+
+        # Режим ведущего: только выбираем персонажа, ждём подтверждения
+        if session.host_mode and session.host_id:
+            session.character = _random.choice(characters)
+            session.players = [
+                p for p in session.players if p.user_id != session.host_id
+            ]
+            if not session.players:
+                await callback.answer("❌ Нет игроков кроме ведущего.", show_alert=True)
+                return
+            if len(session.players) < 2:
+                await callback.answer(
+                    "❌ Недостаточно игроков для игры.", show_alert=True
+                )
+                return
+            session.state = GameState.LOBBY
+            await callback.answer()
+            # Выходим из лока для отправки сообщений (долгая операция)
+            # lock освободится здесь — continue ниже
+        else:
+            # Захватываем флаг, что игра начала запускаться
+            # Обычный режим: запускаем игру
+            try:
+                await lobby_service.start_game(session)
+            except ValueError as e:
+                await callback.answer(f"❌ {str(e)}", show_alert=True)
+                return
+
+            # Устанавливаем состояние в зависимости от типа игры
+            if session.game_type in (
+                GameType.CLASSIC,
+                GameType.NO_TRAITORS,
+                GameType.ALL_TRAITORS,
+                GameType.BLIND_SPY,
+            ):
+                session.state = GameState.DESCRIBING
+            elif session.game_type == GameType.QUESTIONS:
+                session.state = GameState.QUESTIONING
+                session.questions_round = 1
+
+            await callback.answer("🚀 Поехали!")
+            update_session_activity(session)
+            await lobby_service.persist_session(session)
+            # lock освободится здесь — continue ниже
+
+    # === Дальше всё вне лока (отправка сообщений — долгая операция) ===
+
     if session.host_mode and session.host_id:
-        session.character = _random.choice(characters)
-        session.players = [p for p in session.players if p.user_id != session.host_id]
-        if not session.players:
-            await callback.answer("❌ Нет игроков кроме ведущего.", show_alert=True)
-            return
-        if len(session.players) < 2:
-            await callback.answer("❌ Недостаточно игроков для игры.", show_alert=True)
-            return
-        session.state = GameState.LOBBY
-        await callback.answer()
         await callback.message.edit_text(
             "👤 <b>Ожидание ведущего...</b>\n\n"
             "Персонаж отправлен ведущему в ЛС. Как подтвердит — игра начнётся."
@@ -895,29 +952,6 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
             logger.warning("Не удалось отправить персонаж ведущему: %s", e)
         await lobby_service.persist_session(session)
         return
-
-    # Обычный режим: запускаем игру
-    try:
-        await lobby_service.start_game(session)
-    except ValueError as e:
-        await callback.answer(f"❌ {str(e)}", show_alert=True)
-        return
-
-    # Устанавливаем состояние в зависимости от типа игры
-    if session.game_type in (
-        GameType.CLASSIC,
-        GameType.NO_TRAITORS,
-        GameType.ALL_TRAITORS,
-        GameType.BLIND_SPY,
-    ):
-        session.state = GameState.DESCRIBING
-    elif session.game_type == GameType.QUESTIONS:
-        session.state = GameState.QUESTIONING
-        session.questions_round = 1
-
-    await callback.answer("🚀 Поехали!")
-    update_session_activity(session)
-    await lobby_service.persist_session(session)
 
     game_type_map = {
         GameType.CLASSIC: "📝 Классика",
@@ -1003,9 +1037,7 @@ async def cb_start(callback: CallbackQuery, bot: Bot):
             await asyncio.sleep(0.05)
             await bot.send_message(p.user_id, text)
         except Exception as e:
-            logger.warning(
-                "Не удалось отправить роль %s (id=%d): %s", p.full_name, p.user_id, e
-            )
+            logger.warning("Не удалось отправить роль игроку (id=%d): %s", p.user_id, e)
             failed.append(html.escape(p.full_name))
 
     if failed:
@@ -1074,6 +1106,9 @@ async def _start_describing_phase(message: Message, session, bot: Bot):
 
     await lobby_service.persist_session(session)
 
+    # Запускаем таймер авто-пропуска хода
+    await _start_turn_timer(session.chat_id, session, bot, msg, timeout=20)
+
 
 async def _start_questioning_phase(message: Message, session):
     """Начать фазу вопросов."""
@@ -1134,6 +1169,9 @@ async def cmd_stop(message: Message):
     await _cancel_turn_timer(chat_id)
     _reroll_votes.pop(chat_id, None)
     _cancel_votes.pop(chat_id, None)
+    _skip_pause.pop(chat_id, None)
+    _coin_choices.pop(chat_id, None)
+    _mode_tracker.pop(chat_id, None)
     session.state = GameState.FINISHED
     # Отключаем кнопки на старом сообщении лобби
     if session.lobby_msg_id:
@@ -1243,26 +1281,30 @@ async def cmd_join(message: Message):
         await message.answer("⏳ Слишком часто. Подожди.")
         return
     chat_id = message.chat.id
-    session = lobby_service.get_session(chat_id)
-
-    if not session:
-        await message.answer("❌ Нет активной игры.\nСоздайте: /spy")
-        return
-
-    if session.state != GameState.LOBBY:
-        await message.answer("⏳ Игра уже началась, присоединиться нельзя.")
-        return
-
     user = message.from_user
-    ok = lobby_service.add_player(session, user.id, user.username or "", user.full_name)
 
-    if not ok:
-        await message.answer("⚠️ Вы уже в игре или лобби заполнено.")
-        return
+    async with lobby_service.get_lock(chat_id):
+        session = lobby_service.get_session(chat_id)
+        if not session:
+            await message.answer("❌ Нет активной игры.\nСоздайте: /spy")
+            return
+        if session.state != GameState.LOBBY:
+            await message.answer("⏳ Игра уже началась, присоединиться нельзя.")
+            return
 
-    await message.answer(
-        f"✅ <b>{html.escape(user.full_name)}</b> присоединился к игре!"
-    )
+        ok = lobby_service.add_player(
+            session, user.id, user.username or "", user.full_name
+        )
+
+        if not ok:
+            await message.answer("⚠️ Вы уже в игре или лобби заполнено.")
+            return
+
+        update_session_activity(session)
+        await lobby_service.persist_session(session)
+        await message.answer(
+            f"✅ <b>{html.escape(user.full_name)}</b> присоединился к игре!"
+        )
 
 
 @router.message(Command("kick"))
@@ -1486,14 +1528,18 @@ def _pick_special_mode(chat_id: int, total: int) -> str | None:
 
 
 # Таймеры авто-пропуска хода
-_turn_timers: dict[int, asyncio.Task] = {}  # chat_id -> timer task
+# (counter, task) — счётчик защищает от перезаписи при finally старого таймера
+_turn_timers: dict[int, tuple[int, asyncio.Task]] = {}
+_timer_counter: int = 0
 
 
 async def _cancel_turn_timer(chat_id: int):
     """Отменяет таймер авто-пропуска для чата."""
-    task = _turn_timers.pop(chat_id, None)
-    if task and not task.done():
-        task.cancel()
+    entry = _turn_timers.pop(chat_id, None)
+    if entry:
+        _, task = entry
+        if not task.done():
+            task.cancel()
 
 
 async def _start_turn_timer(
@@ -1502,7 +1548,13 @@ async def _start_turn_timer(
     """Запускает таймер авто-пропуска хода. Если игрок не нажал «Я сказал» — пропускаем."""
     await _cancel_turn_timer(chat_id)
 
-    async def _auto_skip():
+    global _timer_counter
+    # asyncio однопоточен, но между await может быть переключение —
+    # инкремент безопасен здесь (нет await между read и write)
+    _timer_counter += 1
+    timer_id = _timer_counter
+
+    async def _auto_skip(tid: int = timer_id):
         try:
             await asyncio.sleep(timeout)
             s = lobby_service.get_session(chat_id)
@@ -1521,9 +1573,12 @@ async def _start_turn_timer(
         except Exception as e:
             logger.warning("Ошибка в таймере хода чата %d: %s", chat_id, e)
         finally:
-            _turn_timers.pop(chat_id, None)
+            # Удаляем из словаря ТОЛЬКО если это наш таймер
+            entry = _turn_timers.get(chat_id)
+            if entry and entry[0] == tid:
+                _turn_timers.pop(chat_id, None)
 
-    _turn_timers[chat_id] = asyncio.create_task(_auto_skip())
+    _turn_timers[chat_id] = (timer_id, asyncio.create_task(_auto_skip()))
 
 
 async def _do_i_said(chat_id: int, user_id: int, bot: Bot):
@@ -1573,6 +1628,11 @@ async def _do_i_said(chat_id: int, user_id: int, bot: Bot):
             votes = _skip_pause.get(chat_id, set())
             if len(votes) >= skip_needed:
                 break
+            # Проверяем, не остановлена ли игра
+            s = lobby_service.get_session(chat_id)
+            if not s or s.state != GameState.DISCUSSION:
+                _skip_pause.pop(chat_id, None)
+                return
         _skip_pause.pop(chat_id, None)
         try:
             await pause_msg.edit_text("🎉 <b>Раунд завершён!</b>")
@@ -1666,6 +1726,13 @@ async def _reroll_character(session, bot: Bot, chat_id: int):
     new = _random.choice([c for c in chars if c != old]) if len(chars) > 1 else chars[0]
     session.character = new
 
+    # Сбрасываем флаги раунда и голосования для нового персонажа
+    for p in session.players:
+        p.has_described = False
+        p.vote_for = None
+    session.current_turn_index = 0
+    session.split_words = []
+
     # Обновляем роли с новым персонажем и шлём ЛС
     for p in session.players:
         await asyncio.sleep(0.05)
@@ -1745,6 +1812,7 @@ async def cb_reroll_vote(callback: CallbackQuery, bot: Bot):
     await callback.answer(f"✅ Голос принят ({len(votes)}/{needed})")
 
     if len(votes) >= needed:
+        _reroll_votes.pop(chat_id, None)  # guard: убираем ДО первого await
         await callback.message.edit_text(
             f"🔄 <b>Персонаж меняется!</b>\n\nГолосов: {len(votes)}/{needed}"
         )
@@ -1860,6 +1928,10 @@ async def cb_next_round(callback: CallbackQuery, bot: Bot):
         )
 
     await send_auto_hints(session, bot, session.description_round)
+
+    # Запускаем таймер авто-пропуска хода
+    await _start_turn_timer(chat_id, session, bot, msg, timeout=20)
+
     await lobby_service.persist_session(session)
 
 
@@ -2106,18 +2178,79 @@ async def cb_skip_pause(callback: CallbackQuery):
     except (IndexError, ValueError):
         await callback.answer("❌ Ошибка данных.", show_alert=True)
         return
+    session = lobby_service.get_session(chat_id)
+    if not session or not session.get_player(callback.from_user.id):
+        await callback.answer("⏳ Ты не в игре.", show_alert=True)
+        return
     votes = _skip_pause.get(chat_id)
     if votes is None:
         await callback.answer("⏳ Пауза уже закончилась.", show_alert=True)
         return
     votes.add(callback.from_user.id)
-    total = (
-        len(lobby_service.get_session(chat_id).players)
-        if lobby_service.get_session(chat_id)
-        else 1
-    )
+    total = len(session.players)
     skip_needed = int(total * 0.75) + 1
     await callback.answer(f"⏩ Принято ({len(votes)}/{skip_needed})")
+
+
+async def _resolve_coin_flip(chat_id: int, choices: dict[int, str], session, bot: Bot):
+    """Разрешает монетку: подбрасывает, исключает проигравшего, проверяет конец игры."""
+    import random as _rnd
+
+    flip = _rnd.choice(["heads", "tails"])
+    flip_name = "🦅 Орёл" if flip == "heads" else "🎲 Решка"
+    players = session.players[:]
+    loser = None
+    winner = None
+    for p in players:
+        player_choice = choices.get(p.user_id)
+        if player_choice == flip:
+            winner = p
+        else:
+            loser = p
+    _coin_choices.pop(chat_id, None)
+    if loser:
+        session.players = [p for p in session.players if p.user_id != loser.user_id]
+        if loser.user_id == session.creator_id and session.players:
+            session.players[0].is_creator = True
+            session.creator_id = session.players[0].user_id
+    await bot.send_message(
+        chat_id,
+        f"🪙 <b>МОНЕТКА!</b>\n\nВыпала: <b>{flip_name}</b>\n"
+        + (
+            f"🚪 <b>{html.escape(loser.full_name)}</b> выбрал {choices.get(loser.user_id, '?')} — выбывает.\n"
+            if loser
+            else ""
+        )
+        + (
+            f"✅ <b>{html.escape(winner.full_name)}</b> выбрал {choices.get(winner.user_id, '?')} — остаётся."
+            if winner
+            else ""
+        ),
+    )
+    await _reset_votes(session)
+    if len(session.players) <= 1:
+        await bot.send_message(
+            chat_id,
+            f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>",
+            reply_markup=play_again_keyboard(),
+        )
+        await lobby_service.end_session(chat_id)
+        return
+    spies_team = sum(
+        1 for p in session.players if p.role in (Role.SPY, Role.PROVOCATEUR)
+    )
+    civs_team = sum(
+        1 for p in session.players if p.role in (Role.CIVILIAN, Role.CONFUSED)
+    )
+    actual_spies = sum(1 for p in session.players if p.role == Role.SPY)
+    if spies_team >= civs_team and actual_spies > 0:
+        await bot.send_message(
+            chat_id,
+            "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.",
+            reply_markup=play_again_keyboard(),
+        )
+        await record_stats(session, civilians_won=False)
+        await lobby_service.end_session(chat_id)
 
 
 @router.callback_query(F.data.startswith("coin_"))
@@ -2151,61 +2284,8 @@ async def cb_coin_choice(callback: CallbackQuery, bot: Bot):
     )
 
     if len(choices) >= 2:
-        flip = _rnd.choice(["heads", "tails"])
-        flip_name = "🦅 Орёл" if flip == "heads" else "🎲 Решка"
-        players = session.players[:]
-        loser = None
-        winner = None
-        for p in players:
-            player_choice = choices.get(p.user_id)
-            if player_choice == flip:
-                winner = p
-            else:
-                loser = p
-        _coin_choices.pop(chat_id, None)
-        if loser:
-            session.players = [p for p in session.players if p.user_id != loser.user_id]
-            if loser.user_id == session.creator_id and session.players:
-                session.players[0].is_creator = True
-                session.creator_id = session.players[0].user_id
-        await bot.send_message(
-            chat_id,
-            f"🪙 <b>МОНЕТКА!</b>\n\nВыпала: <b>{flip_name}</b>\n"
-            + (
-                f"🚪 <b>{html.escape(loser.full_name)}</b> выбрал {choices.get(loser.user_id, '?')} — выбывает.\n"
-                if loser
-                else ""
-            )
-            + (
-                f"✅ <b>{html.escape(winner.full_name)}</b> выбрал {choices.get(winner.user_id, '?')} — остаётся."
-                if winner
-                else ""
-            ),
-        )
-        await _reset_votes(session)
-        if len(session.players) <= 1:
-            await bot.send_message(
-                chat_id,
-                f"🏁 Игра окончена. Персонаж: <code>{html.escape(session.character)}</code>",
-                reply_markup=play_again_keyboard(),
-            )
-            await lobby_service.end_session(chat_id)
-            return
-        spies_team = sum(
-            1 for p in session.players if p.role in (Role.SPY, Role.PROVOCATEUR)
-        )
-        civs_team = sum(
-            1 for p in session.players if p.role in (Role.CIVILIAN, Role.CONFUSED)
-        )
-        actual_spies = sum(1 for p in session.players if p.role == Role.SPY)
-        if spies_team >= civs_team and actual_spies > 0:
-            await bot.send_message(
-                chat_id,
-                "🕵️ <b>ШПИОНЫ ПОБЕДИЛИ!</b> Большинство за шпионами.",
-                reply_markup=play_again_keyboard(),
-            )
-            await record_stats(session, civilians_won=False)
-            await lobby_service.end_session(chat_id)
+        _coin_choices.pop(chat_id, None)  # guard: убираем ДО первого await
+        await _resolve_coin_flip(chat_id, choices, session, bot)
 
 
 @router.callback_query(F.data.startswith("cancel_vote_"))
@@ -2269,38 +2349,47 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
     chat_id = int(parts[1])
     target_id = int(parts[2])
 
-    session = lobby_service.get_session(chat_id)
-    if not session or session.state != GameState.VOTING:
-        await callback.answer("🗳️ Голосование неактивно.", show_alert=True)
-        return
+    async with lobby_service.get_lock(chat_id):
+        session = lobby_service.get_session(chat_id)
+        if not session or session.state != GameState.VOTING:
+            await callback.answer("🗳️ Голосование неактивно.", show_alert=True)
+            return
 
-    voter = session.get_player(callback.from_user.id)
-    target = session.get_player(target_id)
-    if not voter or not target:
-        await callback.answer("⚠️ Вы или цель не в игре.", show_alert=True)
-        return
-    if voter.user_id == target_id:
-        await callback.answer("❌ Нельзя голосовать за себя!", show_alert=True)
-        return
+        voter = session.get_player(callback.from_user.id)
+        target = session.get_player(target_id)
+        if not voter or not target:
+            await callback.answer("⚠️ Вы или цель не в игре.", show_alert=True)
+            return
+        if voter.user_id == target_id:
+            await callback.answer("❌ Нельзя голосовать за себя!", show_alert=True)
+            return
 
-    # Голос за участника сбрасывает голос за отмену
-    cancels = _cancel_votes.get(chat_id)
-    if cancels:
-        cancels.discard(callback.from_user.id)
-        if not cancels:
-            _cancel_votes.pop(chat_id, None)
+        # Голос за участника сбрасывает голос за отмену
+        cancels = _cancel_votes.get(chat_id)
+        if cancels:
+            cancels.discard(callback.from_user.id)
+            if not cancels:
+                _cancel_votes.pop(chat_id, None)
 
-    # Разрешаем переголосовать
-    changed = voter.vote_for is not None and voter.vote_for != target_id
-    voter.vote_for = target_id
-    if changed:
-        await callback.answer(f"🔄 Переголосовал за {html.escape(target.full_name)}")
+        # Разрешаем переголосовать
+        changed = voter.vote_for is not None and voter.vote_for != target_id
+        voter.vote_for = target_id
+        if changed:
+            await callback.answer(
+                f"🔄 Переголосовал за {html.escape(target.full_name)}"
+            )
+        else:
+            await callback.answer(
+                f"🗳️ Вы проголосовали за {html.escape(target.full_name)}"
+            )
+
+        result = process_vote_result(session)
+
+    if result is not None:
+        # Guard: если другой голос уже обработал результат — пропускаем
+        if session.state != GameState.VOTING:
+            return
     else:
-        await callback.answer(f"🗳️ Вы проголосовали за {html.escape(target.full_name)}")
-
-    result = process_vote_result(session)
-
-    if result is None:
         total = len(session.players)
         voted = sum(1 for p in session.players if p.vote_for is not None)
         required = int(total * 0.75) + 1  # >75%
@@ -2344,6 +2433,36 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
                 )
             except Exception:
                 pass
+
+        # Таймаут монетки 60 сек — случайный выбор за неответивших
+        async def _coin_timeout():
+            await asyncio.sleep(60)
+            choices = _coin_choices.get(chat_id)
+            if not choices or len(choices) >= 2:
+                return
+            session_ = lobby_service.get_session(chat_id)
+            if not session_ or session_.state != GameState.VOTING:
+                _coin_choices.pop(chat_id, None)
+                return
+            # Случайный выбор за неответивших
+            import random as _rnd
+
+            remaining_players = session_.players[:]
+            for p in remaining_players:
+                if p.user_id not in choices:
+                    forced = _rnd.choice(["heads", "tails"])
+                    choices[p.user_id] = forced
+                    try:
+                        await bot.send_message(
+                            p.user_id,
+                            f"🪙 Время вышло! За тебя выбрали: {'🦅 Орёл' if forced == 'heads' else '🎲 Решка'}",
+                        )
+                    except Exception:
+                        pass
+            if len(choices) >= 2:
+                await _resolve_coin_flip(chat_id, choices, session_, bot)
+
+        asyncio.create_task(_coin_timeout())
         return
 
     target_name = result["target"].full_name
@@ -2589,5 +2708,10 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
 @router.message(Command("version"))
 async def cmd_version_group(message: Message):
     await message.answer(
-        '🎭 <b>Шпион</b> v1.3.5\n\n<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
+        "🎭 <b>Шпион</b> v1.3.6\n\n"
+        "📦 <b>Последнее обновление (май 2026):</b>\n"
+        "• 🏫 Новая категория — «Класс» (29 персонажей)\n"
+        "• 🐛 Исправлено 70+ багов — игра не зависает\n"
+        "• ⚡ Оптимизация — всё летает\n\n"
+        '<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
     )

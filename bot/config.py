@@ -20,20 +20,32 @@ def is_admin(username: str | None) -> bool:
         return False
     return username.lower() == ADMIN_USERNAME.lower()
 
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "bot.db"
 CHARACTERS_PATH = DATA_DIR / "characters.json"
 
-_char_lock = threading.Lock()
+_char_lock = threading.RLock()
+_characters_cache: dict | None = None
+_characters_mtime: float = 0
 
 
 def load_characters_data() -> dict:
-    """Загружает полные данные персонажей с категориями."""
-    if not CHARACTERS_PATH.exists():
+    """Загружает полные данные персонажей с категориями (с кешированием по mtime).
+    Блокировка shared — защита от конкурентной записи add/remove."""
+    global _characters_cache, _characters_mtime
+    with _char_lock:
+        if CHARACTERS_PATH.exists():
+            mtime = CHARACTERS_PATH.stat().st_mtime
+            if _characters_cache is not None and mtime <= _characters_mtime:
+                return _characters_cache
+            with open(CHARACTERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _characters_cache = data
+            _characters_mtime = mtime
+            return data
         return {"categories": {}}
-    with open(CHARACTERS_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def get_categories() -> dict[str, dict]:
@@ -46,13 +58,13 @@ def get_characters_by_category(categories_list: list[str] | None = None) -> list
     """Возвращает список персонажей по списку категорий или всех."""
     data = load_characters_data()
     all_cats = data.get("categories", {})
-    
+
     if not categories_list or "*" in categories_list:
         all_chars = []
         for cat_data in all_cats.values():
             all_chars.extend(cat_data.get("characters", []))
         return all_chars
-    
+
     result = []
     for cat_id in categories_list:
         if cat_id in all_cats:
@@ -62,9 +74,11 @@ def get_characters_by_category(categories_list: list[str] | None = None) -> list
 
 def save_characters_data(data: dict) -> None:
     """Сохраняет данные персонажей в файл."""
+    global _characters_cache
     with _char_lock:
         with open(CHARACTERS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+    _characters_cache = None
 
 
 def add_custom_character(character: str) -> bool:
@@ -81,7 +95,7 @@ def add_custom_character(character: str) -> bool:
             categories["custom"] = {
                 "name": "Кастомные",
                 "emoji": "✨",
-                "characters": []
+                "characters": [],
             }
 
         custom_chars = categories["custom"].get("characters", [])
@@ -94,8 +108,10 @@ def add_custom_character(character: str) -> bool:
 
 def save_characters_data_nolock(data: dict) -> None:
     """Сохраняет данные персонажей в файл (без блокировки)."""
+    global _characters_cache
     with open(CHARACTERS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    _characters_cache = None
 
 
 def remove_custom_character(character: str) -> bool:
@@ -152,4 +168,3 @@ def get_category_name(categories_list: list[str] | None = None) -> str:
         else:
             names.append(c)
     return ", ".join(names) if names else "🎲 Все категории"
-

@@ -123,10 +123,12 @@ def _levenshtein(s1: str, s2: str) -> int:
 
 def guess_matches(guess: str, character: str) -> bool:
     """Проверяет, совпадает ли догадка с персонажем (fuzzy matching 45%)."""
+    if not character or not guess:
+        return False
     g = normalize_for_comparison(guess)
     c = normalize_for_comparison(character)
     dist = _levenshtein(g, c)
-    threshold = max(1, int(len(c) * 0.45))
+    threshold = max(2, int(len(c) * 0.45))
     return dist <= threshold
 
 
@@ -138,7 +140,7 @@ _last_rate_limit_cleanup: float = 0.0
 def check_rate_limit(user_id: int, cooldown: float = 1.0) -> bool:
     """Проверяет рейт-лимит. Возвращает True если можно, False если рано."""
     global _rate_limit, _last_rate_limit_cleanup
-    now = time.time()
+    now = time.monotonic()
     if now - _last_rate_limit_cleanup >= 60:
         _rate_limit = {uid: t for uid, t in _rate_limit.items() if now - t < 300}
         _last_rate_limit_cleanup = now
@@ -156,28 +158,29 @@ def clear_rate_limit(user_id: int):
 
 async def record_stats(session, civilians_won: bool = True, spy_guess: bool = False):
     """Записывает статистику для всех игроков после окончания игры."""
-    from bot.models.database import update_stats
+    from bot.models.database import update_stats_batch
 
+    updates = []
     for p in session.players:
         if p.role == Role.SPY or p.role == Role.PROVOCATEUR:
             won = spy_guess or not civilians_won
         else:
             won = civilians_won
+        updates.append((p.user_id, won, p.hint_used, p.letter_sent))
+
+    if updates:
         try:
-            await update_stats(
-                user_id=p.user_id,
-                won=won,
-                hint_used=p.hint_used,
-                letter_sent=p.letter_sent,
-            )
+            await update_stats_batch(updates)
         except Exception as e:
-            logger.warning("Не удалось сохранить статистику для %d: %s", p.user_id, e)
+            logger.warning("Не удалось сохранить статистику: %s", e)
 
 
-def randomize_settings(session: GameSession) -> None:
-    """Рандомизирует настройки игры."""
-    # Рандомные категории
+def randomize_settings(session: GameSession) -> bool:
+    """Рандомизирует настройки игры. Возвращает True если успешно, False если нет категорий."""
     all_cats = list(get_categories().keys())
+    if not all_cats:
+        return False
+
     session.categories = random.sample(
         all_cats, k=random.randint(1, min(3, len(all_cats)))
     )
@@ -214,6 +217,8 @@ def randomize_settings(session: GameSession) -> None:
         session.provocateur_enabled = random.choice([True, False])
     else:
         session.provocateur_enabled = False
+
+    return True
 
 
 def _weighted_choice_idx(weights: list[float]) -> int:
@@ -386,6 +391,8 @@ async def assign_roles(session: GameSession, pick_character: bool = True) -> Non
 def get_hint_for_spy(session: GameSession, hint_type: str) -> str:
     """Возвращает подсказку для шпиона."""
     character = session.character
+    if not character:
+        return "🚫 Персонаж не задан"
 
     if hint_type == "random_letter":
         letter_positions = [i for i, c in enumerate(character) if c.isalpha()]
@@ -411,7 +418,7 @@ HINT_TYPES = ["random_letter", "first_letter", "last_letter", "length"]
 
 
 async def send_auto_hints(session: GameSession, bot, round_num: int):
-    if round_num <= 1:
+    if round_num < 1:
         return
     spis = [p for p in session.players if p.role == Role.SPY]
     if not spis:
@@ -420,6 +427,8 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
     if (round_num - 1) % cnt != 0:
         return
     hint_count = min(round_num - 1, len(HINT_TYPES))
+    if hint_count < 1:
+        hint_count = 1  # минимум 1 подсказка, даже на 1-м раунде
     for i, spy in enumerate(spis):
         spy_types = random.sample(HINT_TYPES, hint_count)
         hints = [get_hint_for_spy(session, t) for t in spy_types]
@@ -430,7 +439,6 @@ async def send_auto_hints(session: GameSession, bot, round_num: int):
                 spy.user_id,
                 f"💡 <b>Раунд {round_num} — подсказка ({hint_count} шт.)</b>\n\n{hint_text}",
             )
-            spy.hint_used = True
         except Exception:
             pass
     civilians = [p for p in session.players if p.role != Role.SPY]
@@ -492,6 +500,10 @@ def process_vote_result(session: GameSession) -> dict | None:
     if count < majority and voted < total:
         return None
 
+    # Все проголосовали, но никто не набрал большинства — тупик
+    if count < majority and voted == total:
+        return {"outcome": "no_majority", "total": total}
+
     result = {
         "target_id": most_voted,
         "target": target,
@@ -500,13 +512,11 @@ def process_vote_result(session: GameSession) -> dict | None:
         "all_voted": voted == total,
     }
 
-    if target.role in (Role.CIVILIAN, Role.CONFUSED) and (
-        count >= majority or voted == total
-    ):
+    if target.role in (Role.CIVILIAN, Role.CONFUSED) and count >= majority:
         result["outcome"] = "civilian_caught"
-    elif target.role == Role.PROVOCATEUR and (count >= majority or voted == total):
+    elif target.role == Role.PROVOCATEUR and count >= majority:
         result["outcome"] = "provocateur_caught"
-    elif target.role == Role.SPY and (count >= majority or voted == total):
+    elif target.role == Role.SPY and count >= majority:
         remaining = sum(
             1 for p in session.players if p.role == Role.SPY and p.user_id != most_voted
         )

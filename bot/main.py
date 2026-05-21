@@ -9,11 +9,13 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeAllGroupChats,
+    ErrorEvent,
 )
 
 from bot.config import BOT_TOKEN
 from bot.models.database import init_db, get_all_active_sessions, cleanup_stale_sessions
 from bot.handlers import group, private
+from bot.services import lobby_service
 from bot.services.lobby_service import restore_session
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,20 @@ async def set_bot_commands(bot: Bot):
 def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+
+    @dp.error()
+    async def global_error_handler(event: ErrorEvent):
+        """Глобальный обработчик ошибок. Отвечает на callback, чтобы кнопки не висели."""
+        logger.error("Global error: %s", event.exception)
+        try:
+            if event.update.callback_query:
+                await event.update.callback_query.answer(
+                    "⚠️ Ошибка, попробуй снова.", show_alert=True
+                )
+        except Exception:
+            pass
+        return True
+
     dp.include_router(private.router)
     dp.include_router(group.router)
 
@@ -81,20 +97,45 @@ def main():
         await set_bot_commands(bot)
         await private.init_started_users()
         # Восстанавливаем активные сессии из БД
+        from bot.models.game import GameState
+
+        restored_count = 0
+        terminated_count = 0
         try:
             active = await get_all_active_sessions()
             for chat_id in active:
                 try:
                     s = await restore_session(chat_id)
                     if s:
-                        logger.info(
-                            "Восстановлена сессия для чата %d (состояние: %s)",
-                            chat_id,
-                            s.state.value,
-                        )
+                        # Сессии в игровых состояниях без таймеров — зомби, завершаем их
+                        if s.state in (
+                            GameState.DESCRIBING,
+                            GameState.VOTING,
+                            GameState.QUESTIONING,
+                            GameState.ROLE_DISTRIBUTION,
+                        ):
+                            s.state = GameState.FINISHED
+                            await lobby_service.end_session(chat_id)
+                            terminated_count += 1
+                            logger.info(
+                                "Завершена зомби-сессия чата %d (была: %s)",
+                                chat_id,
+                                s.state.value,
+                            )
+                        else:
+                            restored_count += 1
+                            logger.info(
+                                "Восстановлена сессия для чата %d (состояние: %s)",
+                                chat_id,
+                                s.state.value,
+                            )
                 except Exception as e:
                     logger.warning("Не удалось восстановить сессию %d: %s", chat_id, e)
-            logger.info("Бот запущен. Восстановлено %d сессий.", len(active))
+            logger.info(
+                "Бот запущен. Восстановлено %d сессий, завершено %d зомби-сессий.",
+                restored_count,
+                terminated_count,
+            )
         except Exception as e:
             logger.warning("Не удалось загрузить активные сессии: %s", e)
 
@@ -102,7 +143,7 @@ def main():
         while True:
             await asyncio.sleep(900)
             try:
-                await cleanup_stale_sessions(max_age=7200)
+                await cleanup_stale_sessions(max_age=600)
             except Exception as e:
                 logger.warning("Ошибка при очистке сессий: %s", e)
 

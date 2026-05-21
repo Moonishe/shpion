@@ -22,6 +22,7 @@ router = Router()
 router.message.filter(F.chat.type == "private")
 
 _started_users: set[int] = set()
+_STARTED_USERS_CACHE_LIMIT = 20000
 
 
 async def init_started_users():
@@ -37,6 +38,13 @@ def get_unstarted(players) -> list[str]:
     return [p.full_name for p in players if p.user_id not in _started_users]
 
 
+async def _trim_started_users_if_needed():
+    """Предотвращает бесконечный рост кеша: перезагружает из БД если превышен лимит."""
+    global _started_users
+    if len(_started_users) > _STARTED_USERS_CACHE_LIMIT:
+        _started_users = await load_started_users()
+
+
 # ═══════════════════════════════════════════════════════════════
 # 📱 ПРИВАТНЫЕ КОМАНДЫ
 # ═══════════════════════════════════════════════════════════════
@@ -45,8 +53,9 @@ def get_unstarted(players) -> list[str]:
 @router.message(Command("start"))
 async def cmd_start_private(message: Message):
     """Приветствие в ЛС."""
-    _started_users.add(message.from_user.id)
     await mark_user_started(message.from_user.id)
+    _started_users.add(message.from_user.id)
+    await _trim_started_users_if_needed()
     await message.answer(
         """
 🎭 <b>ШПИОН</b> — бот для игры
@@ -64,7 +73,7 @@ async def cmd_start_private(message: Message):
 🕵️ Шпионы — нет, угадывают
 🤡 Провокатор — знает фейкового
 
-⚠️ Напиши /start до начала игры, чтобы получать роли!
+✅ Теперь ты будешь получать роли в ЛС во время игры!
 """.strip()
     )
 
@@ -90,25 +99,23 @@ async def cmd_guess(message: Message, bot: Bot):
         return
 
     # Находим сессию, где пользователь — шпион
-    session = None
-    player = None
-    for s in lobby_service.get_all_sessions():
-        p = s.get_player(user_id)
-        if p and p.role == Role.SPY:
-            session = s
-            player = p
-            break
+    session = lobby_service.get_session_by_player(user_id)
+    player = session.get_player(user_id) if session else None
 
     if not session or not player:
         await message.answer("🎭 Ты не в игре.")
+        return
+
+    if player.role != Role.SPY:
+        await message.answer("🎭 Ты мирный, угадывать не нужно. Слушай описания.")
         return
 
     if session.game_type == GameType.BLIND_SPY:
         await message.answer("🎭 Ты мирный, угадывать не нужно. Слушай описания.")
         return
 
-    if player.role != Role.SPY:
-        await message.answer("🎭 Ты мирный, угадывать не нужно. Слушай описания.")
+    if session.state in (GameState.LOBBY, GameState.FINISHED):
+        await message.answer("🎭 Игра ещё не началась или уже закончилась.")
         return
 
     session.spy_guess = guess
@@ -175,21 +182,14 @@ async def cmd_guess(message: Message, bot: Bot):
 async def cmd_hint(message: Message):
     """Запрос подсказки для шпиона."""
     user_id = message.from_user.id
-    if not check_rate_limit(user_id, cooldown=2.0):
-        await message.answer("⏳ Слишком часто. Подожди секунду.")
+    if not check_rate_limit(user_id, cooldown=10.0):
+        await message.answer("⏳ Слишком часто. Подожди.")
         return
 
     # Находим сессию, где пользователь — шпион
-    session = None
-    player = None
-    for s in lobby_service.get_all_sessions():
-        p = s.get_player(user_id)
-        if p and p.role == Role.SPY:
-            session = s
-            player = p
-            break
-
-    if not session or not player:
+    session = lobby_service.get_session_by_player(user_id)
+    player = session.get_player(user_id) if session else None
+    if not session or not player or player.role != Role.SPY:
         await message.answer("🎭 Ты не в игре.")
         return
 
@@ -201,11 +201,22 @@ async def cmd_hint(message: Message):
         await message.answer("🎭 Ты мирный, подсказки не для тебя. Слушай описания.")
         return
 
-    if player.role != Role.SPY:
-        await message.answer("🎭 Ты мирный, подсказки не для тебя. Слушай описания.")
+    # Даём подсказку вручную (1 раз за игру)
+    if player.hint_used:
+        await message.answer("⚠️ Ты уже использовал подсказку.")
         return
 
-    await message.answer("💡 Подсказки приходят автоматически каждый раунд. Жди.")
+    import random as _rnd
+    from bot.services.game_service import get_hint_for_spy, HINT_TYPES
+
+    hint_type = _rnd.choice(HINT_TYPES)
+    hint_text = get_hint_for_spy(session, hint_type)
+    player.hint_used = True
+    await lobby_service.persist_session(session)
+    await message.answer(
+        f"💡 <b>Подсказка</b>\n\n{hint_text}\n\n"
+        f"Подсказки также приходят автоматически каждый раунд."
+    )
 
 
 @router.callback_query(F.data.startswith("hint_"))
@@ -324,14 +335,8 @@ async def cmd_send(message: Message, bot: Bot):
         return
 
     # Находим сессию игрока
-    session = None
-    player = None
-    for s in lobby_service.get_all_sessions():
-        p = s.get_player(message.from_user.id)
-        if p:
-            session = s
-            player = p
-            break
+    session = lobby_service.get_session_by_player(message.from_user.id)
+    player = session.get_player(message.from_user.id) if session else None
 
     if not session or not player:
         await message.answer("🚫 Ты не в игре. Письма только во время игры.")
@@ -426,11 +431,9 @@ async def cmd_setchar(message: Message):
         return
 
     # Ищем сессию, где пользователь — ведущий
-    session = None
-    for s in lobby_service.get_all_sessions():
-        if s.host_mode and s.host_id == message.from_user.id:
-            session = s
-            break
+    session = lobby_service.get_session_by_player(message.from_user.id)
+    if session and not (session.host_mode and session.host_id == message.from_user.id):
+        session = None
 
     if not session:
         await message.answer("🚫 Ты не ведущий в активной игре.")
@@ -454,5 +457,10 @@ async def cmd_setchar(message: Message):
 @router.message(Command("version"))
 async def cmd_version_private(message: Message):
     await message.answer(
-        '🎭 <b>Шпион</b> v1.3.4\n\n<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
+        "🎭 <b>Шпион</b> v1.3.6\n\n"
+        "📦 <b>Последнее обновление (май 2026):</b>\n"
+        "• 🏫 Новая категория — «Класс» (29 персонажей)\n"
+        "• 🐛 Исправлено 70+ багов — игра не зависает\n"
+        "• ⚡ Оптимизация — всё летает\n\n"
+        '<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
     )
