@@ -2708,9 +2708,10 @@ async def cb_vote(callback: CallbackQuery, bot: Bot):
 @router.message(Command("version"))
 async def cmd_version_group(message: Message):
     await message.answer(
-        "🎭 <b>Шпион</b> v1.3.6\n\n"
+        "🎭 <b>Шпион</b> v1.3.6.1\n\n"
         "📦 <b>Последнее обновление (май 2026):</b>\n"
-        "• 🏫 Новая категория — «Класс» (29 персонажей)\n"
+        "• 🏫 Новая категория — «Класс» (31 персонаж)\n"
+        "• 👩‍🏫 Добавлены: Елена Иозасовна, Настя которая страшная\n"
         "• 🐛 Исправлено 70+ багов — игра не зависает\n"
         "• ⚡ Оптимизация — всё летает\n\n"
         '<a href="https://github.com/Moonishe/shpion">github.com/Moonishe/shpion</a>'
